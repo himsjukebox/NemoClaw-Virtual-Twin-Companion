@@ -1,0 +1,67 @@
+# =============================================================================
+# NemoClaw Virtual Twin Companion — Tool Configuration
+# =============================================================================
+# Defines the tools available to agents. Each tool has metadata describing its
+# purpose, execution method, and sandboxing requirements.
+# =============================================================================
+
+# ---------------------------------------------------------------------------
+# CAD Generation Tool
+# ---------------------------------------------------------------------------
+cad_generator:
+  name: "Parametric CAD Generator"
+  description: >
+    Executes master_drone_template.py with modified parametric variables to
+    produce STEP and STL files. This tool writes parameter values into the
+    script's header, then invokes it inside a sandboxed environment.
+  script_path: "master_drone_template.py"
+  output_files:
+    - "optimized_drone_chassis.step"
+    - "optimized_drone_chassis.stl"
+  parameters:
+    arm_length:
+      type: float
+      unit: mm
+      min: 80.0
+      max: 200.0
+      default: 120.0
+    material_thickness:
+      type: float
+      unit: mm
+      min: 2.0
+      max: 10.0
+      default: 5.0
+    arm_width:
+      type: float
+      unit: mm
+      min: 8.0
+      max: 25.0
+      default: 15.0
+    center_cutout_radius:
+      type: float
+      unit: mm
+      min: 10.0
+      max: 30.0
+      default: 20.0
+  # Sandbox configuration for NVIDIA OpenShell
+  sandbox:
+    provider: "nvidia_openshell"
+    # The actual sandbox command will be injected at runtime.
+    # See tools/cad_tool.py for the injection point.
+    timeout_seconds: 60
+    memory_limit_mb: 512
+
+# ---------------------------------------------------------------------------
+# RAG Retrieval Tool
+# ---------------------------------------------------------------------------
+rag_retriever:
+  name: "Engineering Knowledge Retriever"
+  description: >
+    Retrieves relevant engineering documentation chunks from the FAISS vector
+    store. Used by the Validator Agent to ground its assessment in published
+    drone design standards and material property data.
+  embedding_model: "NV-Embed-QA"
+  vector_store_path: "data/vectorstore"
+  chunk_size: 500
+  chunk_overlap: 50
+  top_k: 5

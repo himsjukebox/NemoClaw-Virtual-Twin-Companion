@@ -1,0 +1,36 @@
+# =============================================================================
+# NemoClaw Virtual Twin Companion — RAG Pipeline Configuration
+# =============================================================================
+# Configuration for the Retrieval-Augmented Generation pipeline that provides
+# engineering context to the Validator Agent.
+# =============================================================================
+
+rag_pipeline:
+  # Directory containing source PDFs for the knowledge base
+  source_directory: "data/"
+  
+  # NVIDIA Embedding model — accessed via langchain-nvidia-ai-endpoints
+  embedding:
+    model: "NV-Embed-QA"
+    # The NVIDIAEmbeddings class from langchain-nvidia-ai-endpoints handles
+    # API key and endpoint configuration via environment variables.
+    truncate: "END"
+  
+  # Text splitting configuration for PDF ingestion
+  text_splitter:
+    chunk_size: 500
+    chunk_overlap: 50
+    separator: "\n\n"
+  
+  # FAISS vector store persistence
+  vector_store:
+    type: "faiss"
+    persist_directory: "data/vectorstore"
+    # If the vectorstore directory doesn't exist, the system will build it
+    # from source PDFs on first run.
+  
+  # Retrieval parameters
+  retrieval:
+    search_type: "similarity"
+    top_k: 5
+    score_threshold: 0.7

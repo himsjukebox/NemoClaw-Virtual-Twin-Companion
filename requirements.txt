@@ -1,0 +1,47 @@
+# =============================================================================
+# NemoClaw Virtual Twin Companion - Python Dependencies
+# =============================================================================
+# THIS PROJECT USES NVIDIA AI EXCLUSIVELY.
+# NO OpenAI, Anthropic, or non-NVIDIA LLM provider dependencies are permitted.
+# =============================================================================
+
+# NVIDIA AI Endpoints (LLM + Embeddings) — THIS IS THE ONLY LLM PROVIDER
+langchain-nvidia-ai-endpoints>=0.3.0
+
+# LangGraph for multi-agent orchestration
+langgraph>=0.2.0
+langchain>=0.3.0
+langchain-core>=0.3.0
+langchain-community>=0.3.0
+langchain-text-splitters>=0.3.0
+
+# Streamlit for the web UI
+streamlit>=1.30.0
+
+# YAML configuration loader
+pyyaml>=6.0
+
+# Vector store for RAG
+faiss-cpu>=1.7.0
+
+# CAD kernel (used by master_drone_template.py)
+cadquery>=2.4.0
+
+# PDF loading for RAG ingestion
+pypdf>=3.0.0
+
+# Environment variable management for local development
+python-dotenv>=1.0.0
+
+# 3D visualization in Streamlit
+pyvista>=0.43.0
+stpyvista>=0.0.10
+
+# Utilities
+numpy>=1.24.0
+
+# =============================================================================
+# Testing Dependencies
+# =============================================================================
+hypothesis>=6.0.0
+pytest>=7.0.0
