@@ -1,385 +1,292 @@
-<div align="center">
-
 # 🚁 NemoClaw Virtual Twin Companion
 
-### Conversational Parametric CAD Design with NVIDIA Agentic AI
+### Conversational, multi-part parametric CAD design powered by the NVIDIA Agentic AI stack
 
 [![NVIDIA NIM](https://img.shields.io/badge/NVIDIA-NIM-76B900?style=for-the-badge&logo=nvidia&logoColor=white)](https://build.nvidia.com/)
 [![LangGraph](https://img.shields.io/badge/LangGraph-Orchestrator-1C3C3C?style=for-the-badge&logo=langchain&logoColor=white)](https://langchain-ai.github.io/langgraph/)
 [![Streamlit](https://img.shields.io/badge/Streamlit-UI-FF4B4B?style=for-the-badge&logo=streamlit&logoColor=white)](https://streamlit.io/)
-[![Python 3.10+](https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python&logoColor=white)](https://python.org/)
+[![CadQuery](https://img.shields.io/badge/CadQuery-BREP-005386?style=for-the-badge)](https://cadquery.readthedocs.io/)
 
-**A multi-agent engineering AI system that translates natural language into optimized 3D quadcopter chassis geometry — powered entirely by NVIDIA's Agentic AI stack.**
-
-[Architecture](#-system-architecture-overview) • [NVIDIA Stack](#-nvidia-agentic-ai-stack-summary) • [Whiteboard Pattern](#-whiteboard-state-pattern) • [Getting Started](#-startup-commands) • [Configuration](#%EF%B8%8F-nvidia_api_key-configuration) • [Guardrails & Observability](#-nemo-agent-toolkit-guardrails--observability)
-
-</div>
+NemoClaw turns plain-English design goals into real, downloadable 3D drone parts. Describe what you want ("a 3-blade propeller with 100 mm diameter", "a hexacopter frame with long arms"), and a multi-agent pipeline generates the parametric geometry, validates it against engineering rules grounded in your own reference PDFs, and renders an interactive 3D model you can download as STEP or STL.
 
 ---
 
-## 🏗️ System Architecture Overview
+## ✨ Key Features
 
-NemoClaw Virtual Twin Companion uses a **multi-agent pipeline** orchestrated by a LangGraph StateGraph. Two specialized AI agents — a Design Agent and a Validator Agent — collaborate iteratively to convert natural-language design goals into parametric 3D geometry, validated against engineering standards.
-
-### Core Pipeline Flow
-
-```
-User → Guardrails → Design Agent → CAD Tool → Validator Agent → iterate/return
-```
-
-The system implements the **Whiteboard State Pattern**: a shared mutable state dictionary flows between graph nodes, accumulating design parameters, validation results, and agent traces. This eliminates direct agent-to-agent coupling and enables deterministic, fully observable execution.
-
-### Architecture Diagram
-
-```mermaid
-graph TD
-    User["👤 User / Streamlit UI"] -->|Natural Language Goal| GR["🛡️ Guardrails<br/>(NeMo Agent Toolkit)"]
-    
-    subgraph LangGraph["⚙️ LangGraph StateGraph Orchestrator"]
-        GR -->|Safe Input| DA["🎯 Design Agent<br/>(ChatNVIDIA + Nemotron 70B)"]
-        DA -->|Design Parameters JSON| CAD["🏭 CAD Tool<br/>(NemoClaw/OpenShell Sandbox)"]
-        CAD -->|STEP/STL Paths| VA["✅ Validator Agent<br/>(ChatNVIDIA + RAG)"]
-        VA -->|"❌ FAIL (iter < 5)"| DA
-        VA -->|"✅ PASS"| END["📦 Return Final State"]
-    end
-    
-    DA -.->|Inference| NIM["☁️ NVIDIA NIM<br/>Nemotron 70B Instruct"]
-    VA -.->|Inference| NIM
-    VA -.->|Query| RAG["📚 RAG Engine<br/>FAISS + NV-Embed-QA"]
-    CAD -.->|Sandboxed Exec| SANDBOX["🔒 NemoClaw/OpenShell<br/>CadQuery Runtime"]
-    RAG -.->|Embeddings| NIM
-    
-    END -->|Final State| User
-
-    GR -->|"🚫 Blocked"| REJECT["⛔ Safety Rejection"]
-    REJECT --> User
-```
-
-### Component Interactions
-
-| Component | Role | Communicates With |
-|-----------|------|-------------------|
-| **Orchestrator** (`main.py`) | Defines LangGraph StateGraph, manages routing & iteration | All components via WhiteboardState |
-| **Guardrails** | Pre-processes user input for safety (keyword filtering) | Orchestrator → blocks or passes |
-| **Design Agent** | Converts NL goals → parametric values via ChatNVIDIA | NVIDIA NIM (Nemotron 70B) |
-| **CAD Tool** | Injects parameters into CadQuery script, executes in sandbox | NemoClaw/OpenShell runtime |
-| **Validator Agent** | Evaluates designs against rules + RAG knowledge | NVIDIA NIM + RAG Engine |
-| **RAG Engine** | Retrieves engineering context from PDF vector store | NVIDIA NIM (NV-Embed-QA) + FAISS |
-| **Streamlit UI** (`app.py`) | Chat interface, agent trace, 3D viewer placeholder | Orchestrator `run_graph()` |
-
-### Iteration Convergence Logic
-
-The pipeline iterates up to **5 times** until the Validator Agent issues a PASS verdict:
-
-1. **PASS** → Graph terminates, final state returned to UI
-2. **FAIL + iterations < 5** → Validator feedback routed back to Design Agent for refinement
-3. **FAIL + iterations ≥ 5** → Graph terminates with last state and failure feedback
+- **Conversational CAD** — natural-language prompts become parametric 3D geometry.
+- **Multi-part / polymorphic** — generates three component families: **chassis**, **propeller**, and **motor mount**. The Design Agent automatically picks the right one from your prompt.
+- **Configurable rotor count** — chassis supports `arm_count` 3–8 (tricopter, quadcopter, pentacopter, hexacopter, octocopter).
+- **Real geometry, not a stub** — the CAD Tool executes [CadQuery](https://cadquery.readthedocs.io/) to produce actual `.STEP` (BREP solid) and `.STL` (mesh) files.
+- **Multimodal RAG grounding** — the Validator Agent consults your engineering PDFs, including **text and image/diagram captions** generated by an NVIDIA vision model.
+- **Iterative self-correction** — if validation fails, feedback loops back to the Design Agent (up to 3 iterations).
+- **Interactive 3D viewer** — rotate/zoom the result in-browser, with **STEP and STL download buttons**.
+- **100% NVIDIA inference** — all LLM and embedding calls go through NVIDIA NIM via `langchain-nvidia-ai-endpoints`. No OpenAI/Anthropic dependencies.
 
 ---
 
-## 🟢 NVIDIA Agentic AI Stack Summary
+## 🏗️ Architecture
 
-This project demonstrates comprehensive integration with NVIDIA's AI platform. **Every inference call, every embedding, and every code execution uses NVIDIA services exclusively** — zero OpenAI, Anthropic, or third-party LLM dependencies.
+### Pipeline
 
-| Component | Role |
-|-----------|------|
-| **🧠 NVIDIA NIM** | Provides optimized inference microservices for Nemotron LLMs and embeddings, delivering fast and scalable AI reasoning through the `langchain-nvidia-ai-endpoints` library |
-| **🔒 NemoClaw/OpenShell** | Provides enterprise-grade sandboxed execution for AI-generated CadQuery scripts, ensuring LLM-produced parametric code runs safely without compromising the host system |
-| **🤖 NeMo Agent Toolkit** | Provides multi-agent orchestration patterns, state management, Guardrails (safety checks), and observability (Agent Traces) for enterprise-grade AI workflows |
-| **🎙️ NVIDIA Riva** | Provides speech recognition (ASR) and text-to-speech (TTS) for multimodal interaction, enabling the Speech-to-CAD workflow for hands-free design |
-
-### How They Connect
-
+```text
+User prompt
+    │
+    ▼
+┌──────────────┐   parameters JSON   ┌──────────────┐   STEP/STL paths   ┌──────────────┐
+│ Design Agent │ ──────────────────► │   CAD Tool   │ ─────────────────► │  Validator   │
+│  (ChatNVIDIA)│                     │  (CadQuery)  │                    │  Agent (RAG) │
+└──────────────┘                     └──────────────┘                    └──────┬───────┘
+       ▲                                                                         │
+       │              FAIL & iteration < 3 (loop back with feedback)            │
+       └─────────────────────────────────────────────────────────────────────-─┤
+                                                                                 │
+                                              PASS  /  iteration ≥ 3  ──────────►  Return to UI
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│  NVIDIA Agentic AI Stack — Full Integration Map                 │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  ┌──────────────┐    ┌───────────────────────────────────────┐  │
-│  │  NVIDIA Riva │    │  NeMo Agent Toolkit                   │  │
-│  │  ASR / TTS   │    │  • Guardrails (safety filtering)     │  │
-│  │  (Voice I/O) │    │  • Agent Traces (observability)      │  │
-│  └──────┬───────┘    │  • State Management (whiteboard)     │  │
-│         │            └───────────────────┬───────────────────┘  │
-│         ▼                                │                      │
-│  ┌──────────────┐                        ▼                      │
-│  │  Streamlit   │◄──────────── LangGraph StateGraph ────────►│  │
-│  │  Chat UI     │                        │                      │
-│  └──────────────┘                        │                      │
-│                          ┌───────────────┼───────────────┐      │
-│                          ▼               ▼               ▼      │
-│                   ┌────────────┐  ┌────────────┐  ┌──────────┐  │
-│                   │ NVIDIA NIM │  │ NVIDIA NIM │  │ NemoClaw │  │
-│                   │ Nemotron   │  │ NV-Embed   │  │ OpenShell│  │
-│                   │ 70B LLM    │  │ QA (embed) │  │ Sandbox  │  │
-│                   └────────────┘  └────────────┘  └──────────┘  │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-```
+
+A LangGraph `StateGraph` orchestrates three nodes. They communicate through a shared **whiteboard state** dictionary rather than calling each other directly — this keeps routing deterministic and every step observable.
+
+### The three agents/tools
+
+| Node | Responsibility | NVIDIA service |
+|------|----------------|----------------|
+| **Design Agent** (`main.py`) | Chooses the component type and emits parametric values as JSON | ChatNVIDIA (Llama 3.1 70B) |
+| **CAD Tool** (`tools/cad_tool.py`) | Injects parameters into the matching CadQuery template and runs it to produce STEP + STL | — (local CadQuery execution) |
+| **Validator Agent** (`main.py`) | Range-checks parameters and reasons over RAG-retrieved engineering context, returning PASS/FAIL + score | ChatNVIDIA + RAG Engine |
+
+### Whiteboard state
+
+| Key | Type | Description |
+|-----|------|-------------|
+| `user_prompt` | `str` | The user's natural-language design goal |
+| `component_type` | `str` | `chassis`, `propeller`, or `motor_mount` |
+| `design_parameters` | `dict` | Component-specific numeric parameters |
+| `cad_output_paths` | `list[str]` | Absolute paths to the generated STL + STEP files |
+| `validator_verdict` | `str` | `PASS` or `FAIL` |
+| `validator_score` | `float` | Confidence score 0.0–1.0 |
+| `validator_feedback` | `str` | JSON with issues + reasoning (fed back on retry) |
+| `iteration_count` | `int` | Design→validate cycles completed (max 3) |
+| `agent_trace` | `list[dict]` | Chronological log of every node action (observability) |
+| `error` | `str \| None` | Error message if any step fails |
 
 ---
 
-## 📋 Whiteboard State Pattern
+## 🟢 NVIDIA Agentic AI Stack
 
-The **Whiteboard State Pattern** is the backbone of inter-agent communication. Instead of direct message passing, all agents read from and write to a shared `WhiteboardState` dictionary that flows through the LangGraph pipeline. This enables:
+| Component | Role in this project |
+|-----------|----------------------|
+| **NVIDIA NIM** | Hosts all inference: the Llama 3.1 70B reasoning model, the Llama 3.2 90B Vision model (image captioning), and the NV-Embed-QA embedding model. Accessed via `langchain-nvidia-ai-endpoints`. |
+| **NeMo Agent Toolkit patterns** | The whiteboard-state orchestration and the `agent_trace` observability log follow NeMo Agent Toolkit multi-agent patterns. |
+| **NemoClaw / OpenShell** | Target runtime for sandboxed CAD script execution in a production deployment (the CAD Tool is structured for this; locally it runs CadQuery in a subprocess). |
+| **NVIDIA Riva** | Planned Speech-to-CAD (ASR) and voice-feedback (TTS) layer — see Roadmap. |
 
-- **Deterministic routing** — edge conditions inspect state keys directly
-- **Full observability** — every state mutation is traceable
-- **Decoupled agents** — no agent imports or calls another agent directly
-- **Iteration without complexity** — the same state dict loops back with updated feedback
+### NIM models used
 
-### WhiteboardState Keys
-
-| Key | Type | Written By | Read By | Description |
-|-----|------|-----------|---------|-------------|
-| `user_request` | `str` | UI (initial) | Guardrails, Design Agent | Natural-language design goal from the user |
-| `design_parameters` | `Optional[dict]` | Design Agent | CAD Tool, Validator Agent | JSON with `arm_length`, `material_thickness`, `arm_width`, `center_cutout_radius` |
-| `validator_feedback` | `Optional[str]` | Validator Agent | Design Agent (on retry) | JSON string with verdict, score, issues, suggestions, reasoning |
-| `iteration_count` | `int` | Design Agent | Orchestrator (routing) | Number of design→validate cycles completed (max 5) |
-| `cad_output_paths` | `Optional[List[str]]` | CAD Tool | UI, Validator Agent | Paths to generated STEP and STL geometry files |
-| `agent_trace` | `List[dict]` | All Nodes | UI (Agent Trace panel) | Chronological log of node invocations and actions |
-| `validator_verdict` | `Optional[str]` | Validator Agent | Orchestrator (routing) | `"PASS"` or `"FAIL"` |
-| `validator_score` | `Optional[float]` | Validator Agent | UI | Confidence score between 0.0 and 1.0 |
-| `error` | `Optional[str]` | Guardrails, CAD Tool | Orchestrator, UI | Error message if any step fails |
-
-### Data Flow Between Agents
-
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                    WhiteboardState Data Flow                         │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│  [User Input]                                                       │
-│       │                                                             │
-│       ▼ writes: user_request                                        │
-│  ┌──────────────┐                                                   │
-│  │  Guardrails  │── writes: error (if blocked), agent_trace         │
-│  └──────┬───────┘                                                   │
-│         │ reads: user_request                                       │
-│         ▼                                                           │
-│  ┌──────────────┐                                                   │
-│  │ Design Agent │── reads: user_request, validator_feedback          │
-│  │              │── writes: design_parameters, iteration_count,      │
-│  │              │           agent_trace                              │
-│  └──────┬───────┘                                                   │
-│         │                                                           │
-│         ▼                                                           │
-│  ┌──────────────┐                                                   │
-│  │   CAD Tool   │── reads: design_parameters                        │
-│  │              │── writes: cad_output_paths, error, agent_trace     │
-│  └──────┬───────┘                                                   │
-│         │                                                           │
-│         ▼                                                           │
-│  ┌──────────────┐                                                   │
-│  │  Validator   │── reads: design_parameters                        │
-│  │    Agent     │── writes: validator_verdict, validator_score,      │
-│  │              │           validator_feedback, agent_trace          │
-│  └──────────────┘                                                   │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
-```
+| Model | Purpose | Used by |
+|-------|---------|---------|
+| `meta/llama-3.1-70b-instruct` | Parameter generation & engineering validation | Design Agent, Validator Agent |
+| `meta/llama-3.2-90b-vision-instruct` | Caption diagrams/images extracted from PDFs | RAG Engine (ingestion) |
+| `NV-Embed-QA` | Text embeddings for similarity search | RAG Engine |
 
 ---
 
-## 🚀 Startup Commands
+## 🧩 Supported Components & Parameters
 
-### Prerequisites
+### Chassis (`master_drone_template.py`)
 
-- Python 3.10+
-- An NVIDIA API key (free tier available at [build.nvidia.com](https://build.nvidia.com/))
+| Parameter | Range | Description |
+|-----------|-------|-------------|
+| `arm_count` | 3 – 8 | Number of arms/motors (tri=3, quad=4, hexa=6, octo=8) |
+| `arm_length` | 80 – 200 mm | Center hub to motor shaft |
+| `material_thickness` | 2 – 10 mm | Frame plate height |
+| `arm_width` | 8 – 25 mm | Arm cross-section width |
+| `center_cutout_radius` | 10 – 30 mm | Mass-reduction center hole |
 
-### Installation
+Arms are generated **radially** at evenly spaced angles (360° / `arm_count`), so the same template produces any rotor configuration.
+
+### Propeller (`propeller_template.py`)
+
+| Parameter | Range | Description |
+|-----------|-------|-------------|
+| `blade_count` | 2 – 4 | Number of blades |
+| `diameter_mm` | 50 – 400 mm | Propeller diameter |
+| `pitch_inches` | 2 – 12 | Blade pitch (drives twist angle) |
+| `hub_radius_mm` | 3 – 15 mm | Central hub radius |
+| `hub_thickness_mm` | 4 – 20 mm | Hub height |
+
+### Motor Mount (`motor_mount_template.py`)
+
+| Parameter | Range | Description |
+|-----------|-------|-------------|
+| `outer_diameter` | 15 – 60 mm | Mounting disc diameter |
+| `mount_thickness` | 1.5 – 8 mm | Disc thickness |
+| `center_hole_diameter` | 3 – 15 mm | Shaft clearance hole |
+| `bolt_spacing` | 8 – 30 mm | 4-bolt square pattern spacing |
+
+---
+
+## 📚 Multimodal RAG
+
+The Validator Agent grounds its verdicts in **your own reference documents**:
+
+1. Drop PDFs into `data/` (drone design guides, material datasheets, standards).
+2. On first run the RAG Engine builds a FAISS vector store from:
+   - **Text chunks** (500 chars, 50 overlap) extracted with PyPDF.
+   - **Image captions** — PyMuPDF extracts diagrams/figures, and `meta/llama-3.2-90b-vision-instruct` describes each one. These captions become searchable chunks too.
+3. The store is persisted to `data/vectorstore/` and reused on subsequent runs.
+4. During validation, the agent retrieves the most relevant chunks and factors them into its reasoning.
+
+To re-ingest after adding documents, delete the store:
 
 ```bash
-# 1. Clone the repository
-git clone <repository-url>
-cd NvidiaAgentHackathon
-
-# 2. Create a virtual environment (recommended)
-python -m venv venv
-source venv/bin/activate        # Linux/macOS
-# venv\Scripts\activate         # Windows
-
-# 3. Install dependencies
-pip install -r requirements.txt
-
-# 4. Set your NVIDIA API key
-export NVIDIA_API_KEY="nvapi-your-key-here"
-# Or on Windows:
-# set NVIDIA_API_KEY=nvapi-your-key-here
-
-# 5. (Optional) Create a .env file for convenience
-echo "NVIDIA_API_KEY=nvapi-your-key-here" > .env
-
-# 6. Launch the Streamlit application
-streamlit run app.py
+rmdir /s /q data\vectorstore     # Windows
+# rm -rf data/vectorstore        # Linux/macOS
 ```
 
-### Quick Test (CLI)
-
-```bash
-# Run the orchestrator directly without the UI
-python main.py
-```
-
-This executes a demo design request through the full multi-agent pipeline and prints the result to the console.
-
----
-
-## 🔑️ NVIDIA_API_KEY Configuration
-
-The system requires a single environment variable to authenticate with all NVIDIA NIM services:
-
-```bash
-export NVIDIA_API_KEY="nvapi-your-key-here"
-```
-
-Get your API key at: [https://build.nvidia.com/](https://build.nvidia.com/)
-
-The `python-dotenv` package is integrated for local development convenience — create a `.env` file in the project root:
-
-```env
-NVIDIA_API_KEY=nvapi-your-key-here
-```
-
-If `NVIDIA_API_KEY` is not set, `ChatNVIDIA` and `NVIDIAEmbeddings` will raise a descriptive error at initialization indicating the missing key.
-
-### NVIDIA NIM Models Used
-
-| Model | Purpose | Component |
-|-------|---------|-----------|
-| `nvidia/llama-3.1-nemotron-70b-instruct` | LLM inference for design parameter generation | Design Agent |
-| `nvidia/llama-3.1-nemotron-70b-instruct` | LLM inference for engineering validation & evaluation | Validator Agent |
-| `NV-Embed-QA` | Vector embedding generation for RAG similarity search | RAG Engine |
-
-All models are accessed through `langchain-nvidia-ai-endpoints`:
-- **ChatNVIDIA** — LLM inference (Design Agent, Validator Agent)
-- **NVIDIAEmbeddings** — Embedding generation (RAG Engine)
-
----
-
-## 🛡️ NeMo Agent Toolkit Guardrails & Observability
-
-### Guardrails — Safety Checks
-
-The system implements **NeMo Agent Toolkit Guardrails** as a pre-processing gate on all user input. Before any agent receives a request, it passes through keyword-based safety filtering:
-
-**What is checked:**
-
-| Category | Examples | Action |
-|----------|----------|--------|
-| **Harmful Content** | hack, exploit, malware, weapon, attack, violence | Input **blocked**, error returned |
-| **Off-Topic Content** | recipe, cooking, weather forecast, stock market, horoscope | Input **blocked**, error returned |
-| **Empty Input** | blank strings, whitespace-only | Input **blocked**, error returned |
-
-**How it works:**
-
-1. User submits a design goal via chat
-2. The **Guardrails node** (first node in the LangGraph StateGraph) intercepts the input
-3. `check_guardrails()` scans for blocked keywords in the lowercased input
-4. If blocked → sets `error` in WhiteboardState, records rejection in `agent_trace`, graph terminates via `END`
-5. If safe → records "PASSED" in `agent_trace`, routes to Design Agent
-
-**Production path:** In a full deployment, this would integrate with NVIDIA's NeMo Guardrails API for comprehensive topic control, jailbreak detection, and output filtering.
-
-### Observability — Agent Trace
-
-The system implements **NeMo Agent Toolkit observability patterns** through the `agent_trace` field in the WhiteboardState. Every node invocation, routing decision, and state mutation is logged for full audit visibility.
-
-**How Agent_Trace entries are recorded:**
-
-Each node appends a structured dict to `agent_trace` upon invocation:
-
-```python
-{
-    "node": "guardrails | design_agent | cad_tool | validator_agent",
-    "action": "PASSED | REJECTED | GENERATED_PARAMS | GENERATED | EVALUATED | ...",
-    # Additional metadata varies by node:
-    "reason": "...",           # Guardrails: rejection reason
-    "parameters": {...},       # Design Agent: generated parameter values
-    "iteration": 1,            # Design Agent: current iteration number
-    "outputs": [...],          # CAD Tool: generated file paths
-    "verdict": "PASS/FAIL",    # Validator: evaluation result
-    "score": 0.85,             # Validator: confidence score
-    "errors": [...]            # CAD Tool: validation errors
-}
-```
-
-**Where traces are visible:**
-- **Streamlit UI** — expandable "Agent Trace" panel with color-coded entries
-- **Console logs** — structured logging at INFO level for every state transition
-- **Final state** — the complete `agent_trace` list is returned with every `run_graph()` response
+The pipeline is **degraded-mode tolerant**: if there are no PDFs, the vision model is unavailable, or the API is unreachable, validation still runs using built-in range/structural rules.
 
 ---
 
 ## 📁 Project Structure
 
-```
+```text
 NvidiaAgentHackathon/
-├── main.py                    # LangGraph Orchestrator entry point
-├── app.py                     # Streamlit UI entry point
-├── requirements.txt           # Python dependencies (NVIDIA-exclusive)
-├── master_drone_template.py   # CadQuery parametric drone chassis script
-├── .env                       # NVIDIA_API_KEY (local dev, gitignored)
-├── README.md                  # This file
+├── main.py                     # LangGraph orchestrator + Design/Validator nodes (entry point)
+├── app.py                      # Streamlit UI (chat, agent trace, 3D viewer, downloads)
 │
-├── agents/                    # AI Agent implementations
-│   ├── __init__.py
-│   ├── design_agent.py        # NL → parametric values (ChatNVIDIA)
-│   └── validator_agent.py     # Engineering evaluation (ChatNVIDIA + RAG)
+├── master_drone_template.py    # CadQuery chassis template (radial arms)
+├── propeller_template.py       # CadQuery propeller template
+├── motor_mount_template.py     # CadQuery motor-mount template
 │
-├── tools/                     # Tool implementations
-│   ├── __init__.py
-│   ├── cad_tool.py            # NemoClaw/OpenShell sandbox execution
-│   └── rag_engine.py          # FAISS + NVIDIAEmbeddings RAG pipeline
+├── tools/
+│   ├── cad_tool.py             # Param injection + CadQuery execution → STEP/STL
+│   ├── rag_engine.py           # Multimodal RAG (text + vision captions, FAISS)
+│   └── geometry_generator.py   # PyVista mesh helper
 │
-├── models/                    # Data models and schemas
-│   ├── __init__.py
-│   ├── state.py               # WhiteboardState TypedDict
-│   ├── parameters.py          # Design parameter ranges & defaults
-│   └── validation.py          # Validator response schema
+├── config/
+│   ├── loader.py               # YAML config loader + validation
+│   ├── agents.yaml             # Agent model/prompt config
+│   ├── tools.yaml              # Tool config
+│   └── rag.yaml                # RAG pipeline + vision config
 │
-├── config/                    # YAML configuration (no JSON)
-│   ├── agents.yaml            # Agent models, prompts, temperatures
-│   ├── tools.yaml             # Tool paths and parameters
-│   └── rag.yaml               # RAG pipeline configuration
+├── models/                     # Shared schemas (WhiteboardState, parameter ranges, validator schema)
+├── agents/                     # Standalone Design/Validator agent classes (unit-tested helpers)
 │
-├── data/                      # RAG source documents
-│   ├── README.md              # PDF naming conventions
-│   └── vectorstore/           # Persisted FAISS index (auto-generated)
+├── data/
+│   ├── README.md               # PDF naming conventions & multimodal notes
+│   └── vectorstore/            # Persisted FAISS index (auto-generated, gitignored)
 │
-└── tests/                     # Test suite
-    ├── __init__.py
-    └── conftest.py            # Shared fixtures and mocked NVIDIA stubs
+├── Output_Dir/                 # Generated STEP/STL + runtime macro (gitignored)
+│
+├── tests/                      # pytest suite (72 tests)
+├── requirements.txt
+├── .env.example                # Copy to .env and add your key
+└── README.md
 ```
 
 ---
 
-## 🧪 Design Parameters
+## 🚀 Getting Started
 
-The system controls four parametric variables for quadcopter chassis generation:
+### Prerequisites
 
-| Parameter | Range (mm) | Default | Description |
-|-----------|-----------|---------|-------------|
-| `arm_length` | 80.0 – 200.0 | 120.0 | Distance from center to motor shaft |
-| `material_thickness` | 2.0 – 10.0 | 5.0 | Z-axis frame height |
-| `arm_width` | 8.0 – 25.0 | 15.0 | Y-axis arm width |
-| `center_cutout_radius` | 10.0 – 30.0 | 20.0 | Center hole radius for mass reduction |
+- Python 3.10+
+- A free NVIDIA API key from [build.nvidia.com](https://build.nvidia.com/)
 
-**Engineering Constraints:**
-- Structural: `arm_width >= arm_length × 0.08`
-- Manufacturability: `material_thickness >= 2.0 mm` (FDM minimum)
+### Install
+
+```bash
+git clone https://github.com/himsjukebox/NemoClaw-Virtual-Twin-Companion.git
+cd NemoClaw-Virtual-Twin-Companion
+
+python -m venv venv
+venv\Scripts\activate            # Windows
+# source venv/bin/activate       # Linux/macOS
+
+pip install -r requirements.txt
+```
+
+> Note: `cadquery` (with the OpenCASCADE kernel) and `pyvista[jupyter]` (with the trame stack for the interactive viewer) are large downloads — first install may take a few minutes.
+
+### Configure your API key
+
+Copy the example env file and add your key:
+
+```bash
+copy .env.example .env           # Windows
+# cp .env.example .env           # Linux/macOS
+```
+
+Then edit `.env`:
+
+```env
+NVIDIA_API_KEY=nvapi-your-key-here
+```
+
+> The `.env` file is gitignored and must never be committed.
+
+### Run
+
+```bash
+# Web UI (recommended)
+streamlit run app.py
+
+# Or run the pipeline directly from the CLI
+python main.py
+```
+
+Open the Streamlit URL, type a goal like *"Design a tricopter frame with long arms"* or *"Make a 3-blade 5-inch propeller"*, and watch the pipeline generate, validate, and render the part.
+
+---
+
+## 🖥️ Using the App
+
+1. **Chat** — describe the part you want. The Design Agent infers the component type and parameters.
+2. **Parameter table** — see the generated values against their allowed ranges.
+3. **Agent Trace** — expand to see every node action (generation, CAD execution, validation, RAG retrieval).
+4. **3D Viewer** — rotate/zoom the rendered model.
+5. **Downloads** — grab the **STEP** (manufacturing/CAD import) or **STL** (3D printing/slicers) file.
+
+---
+
+## 🧪 Testing
+
+```bash
+python -m pytest tests/ -v
+```
+
+The suite has **72 tests**:
+
+- `test_config_loader.py` — YAML loading & validation (26)
+- `test_design_agent.py` — parameter clamping, parsing, invocation (18)
+- `test_validator_agent.py` — rule checks, verdict logic, degraded modes (20)
+- `test_cad_tool.py` — real CadQuery generation for all components + the **arm_count regression test** proving a tricopter ≠ octocopter geometry (8)
+
+The CAD integration tests auto-skip if CadQuery is not installed, so the unit suite stays green in minimal environments.
+
+---
+
+## ⚠️ Known Limitations / Roadmap
+
+This is currently a **parametric geometry generator with rule-based validation**, not a full physics-based engineering tool. It does **not** yet model:
+
+- **Thrust-to-Weight Ratio (TWR)** and motor/prop thrust
+- **Payload / package-load capacity** for commercial delivery use
+- **Mass budget** (no material density or weight calculation)
+- **Flight time / battery / power draw**
+- **Center of gravity, vibration/resonance, arm deflection under load**
+- **Propeller–arm clearance** and cross-component compatibility
+- **Material selection** (PLA vs carbon fiber vs aluminum)
+
+**Planned next:** a physics/calculation layer that accepts mission inputs (payload, motor thrust, battery, material) and validates computed TWR and lift capacity against targets.
+
+**Also planned:** NVIDIA Riva integration for a hands-free **Speech-to-CAD** workflow (voice input) and spoken result feedback (TTS).
 
 ---
 
 ## 📄 License
 
-Built for the NVIDIA India Agentic AI Open Hackathon.
+See `LICENSE`. Built for the NVIDIA India Agentic AI Open Hackathon.
 
 ---
 
-<div align="center">
-
-**Built with ❤️ using NVIDIA NIM • NeMo Agent Toolkit • NemoClaw/OpenShell • LangGraph • Streamlit**
-
-</div>
+Built with NVIDIA NIM • LangGraph • CadQuery • PyVista • Streamlit
