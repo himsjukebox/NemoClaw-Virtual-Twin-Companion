@@ -1,11 +1,13 @@
 import cadquery as cq
+import math
 
 # =====================================================================
 # 1. PARAMETRIC VARIABLES (AI CONTROLLED)
 # =====================================================================
-# These four variables represent the "Design Space". 
+# These variables represent the "Design Space".
 # The NemoClaw Design Agent will iteratively modify these exact numbers
 # based on the Validator Agent's feedback.
+arm_count = 4               # Number of arms/motors (3=tri, 4=quad, 6=hexa, 8=octo)
 arm_length = 120.0          # Distance from center origin to motor shaft (mm)
 material_thickness = 5.0    # Z-axis extrusion height of the entire frame (mm)
 arm_width = 15.0            # Y-axis width of the structural arms (mm)
@@ -25,64 +27,70 @@ fillet_radius = 3.0         # Stress relief for internal corners
 
 def build_drone_chassis():
     """
-    Generates the 3D BREP model of the quadcopter chassis.
+    Generates the 3D BREP model of a multirotor chassis with a configurable
+    number of arms (tricopter, quadcopter, hexacopter, octocopter, etc.).
+
+    The arms are distributed radially at evenly-spaced angles (360 / arm_count),
+    so the same macro produces any rotor configuration from the arm_count
+    parameter alone.
     """
-    
-    # --- STEP A: Create the Base Workplane (CATIA: XY Plane selection) ---
-    # We initialize a sketch on the standard XY plane.
-    base_sketch = cq.Workplane("XY")
-    
-    # --- STEP B: The Center Hub (CATIA: Pad a Circle) ---
-    # We draw a circle at the origin and extrude it to material_thickness.
-    # 'hub' is now a 3D solid cylinder.
-    hub = base_sketch.circle(center_body_radius).extrude(material_thickness)
-    
-    # --- STEP C: The X-Arms (CATIA: Intersecting Pads) ---
-    # To make a symmetrical '+' configuration quadcopter, we draw two long rectangles
-    # that cross at the origin. 
-    # Rect 1: Spans the X-axis (Length = arm_length * 2)
-    # Rect 2: Spans the Y-axis (Rotated 90 degrees)
-    arm_x = base_sketch.rect(arm_length * 2, arm_width).extrude(material_thickness)
-    arm_y = base_sketch.rect(arm_width, arm_length * 2).extrude(material_thickness)
-    
-    # --- STEP D: The Motor Mounts (CATIA: Multi-Pad on points) ---
-    # We push four coordinates to the sketch (the ends of the arms).
-    # We draw circles at those points and extrude them simultaneously.
-    mounts = (
-        base_sketch
-        .pushPoints([
-            (arm_length, 0),    # Right arm end
-            (-arm_length, 0),   # Left arm end
-            (0, arm_length),    # Top arm end
-            (0, -arm_length)    # Bottom arm end
-        ])
-        .circle(motor_mount_radius)
-        .extrude(material_thickness)
-    )
-    
-    # --- STEP E: Boolean Union (CATIA: Add / Assemble) ---
-    # We merge all the separate solid bodies (hub, arms, mounts) into one single solid part.
-    frame = hub.union(arm_x).union(arm_y).union(mounts)
-    
-    # --- STEP F: Weight Relief Cutout (CATIA: Pocket) ---
-    # We select the top face of our new solid, draw a circle in the center,
-    # and execute a 'cutBlind' operation downwards to remove the material.
+
+    # Defensive: arm_count must be a whole number >= 2 for a valid frame.
+    n_arms = int(round(arm_count))
+    if n_arms < 2:
+        n_arms = 2
+
+    # --- STEP A: The Center Hub (CATIA: Pad a Circle) ---
+    # Draw a circle at the origin and extrude it to material_thickness.
+    frame = cq.Workplane("XY").circle(center_body_radius).extrude(material_thickness)
+
+    # --- STEP B: Radial Arms + Motor Mounts (CATIA: Multi-Pad on points) ---
+    # For each arm, build a rectangular arm pointing along +X from the center,
+    # then rotate it about the Z axis to its evenly-spaced angle. A circular
+    # motor mount is placed at the tip of each arm.
+    angle_step = 360.0 / n_arms
+    for i in range(n_arms):
+        angle_deg = i * angle_step
+        angle_rad = math.radians(angle_deg)
+
+        # Arm body: a rectangle centered at half the arm length along +X,
+        # then rotated about the global Z axis to the target angle.
+        arm = (
+            cq.Workplane("XY")
+            .center(arm_length / 2.0, 0)
+            .rect(arm_length, arm_width)
+            .extrude(material_thickness)
+            .rotate((0, 0, 0), (0, 0, 1), angle_deg)
+        )
+        frame = frame.union(arm)
+
+        # Motor mount disc at the arm tip.
+        mount_x = arm_length * math.cos(angle_rad)
+        mount_y = arm_length * math.sin(angle_rad)
+        mount = (
+            cq.Workplane("XY")
+            .center(mount_x, mount_y)
+            .circle(motor_mount_radius)
+            .extrude(material_thickness)
+        )
+        frame = frame.union(mount)
+
+    # --- STEP C: Weight Relief Cutout (CATIA: Pocket) ---
+    # Select the top face, draw a circle in the center, and pocket downwards.
     frame = (
         frame.faces(">Z")                   # Select top-most face
         .workplane()                        # Create a new sketch on this face
         .circle(center_cutout_radius)       # Draw the weight reduction circle
         .cutBlind(-material_thickness)      # Pocket downwards through the part
     )
-    
-    # --- STEP G: Stress Relief Fillets (CATIA: Edge Fillet) ---
-    # Sharp internal corners cause stress fractures. We select all edges that are 
-    # vertical ("|Z") and apply a fillet.
-    # Note: CadQuery's edge selector is incredibly powerful here.
+
+    # --- STEP D: Stress Relief Fillets (CATIA: Edge Fillet) ---
+    # Sharp internal corners cause stress fractures. Select all vertical edges
+    # ("|Z") and apply a fillet. Wrapped in try/except because aggressive
+    # parameter combinations can make the fillet mathematically impossible.
     try:
         frame = frame.edges("|Z").fillet(fillet_radius)
     except Exception as e:
-        # If the LLM generates impossible geometry (e.g., cutout radius is too large),
-        # the fillet will fail mathematically. We catch this so the agent doesn't crash.
         print(f"Geometry error during fillet. Check parameters: {e}")
         pass
 
@@ -94,11 +102,11 @@ def build_drone_chassis():
 if __name__ == "__main__":
     # Generate the 3D solid
     drone_part = build_drone_chassis()
-    
+
     # Export as a dumb solid (.STEP) for manufacturing/3DEXPERIENCE
     cq.exporters.export(drone_part, "optimized_drone_chassis.step")
-    
+
     # Export as a mesh (.STL) for your Streamlit/PyVista Web UI visualization
     cq.exporters.export(drone_part, "optimized_drone_chassis.stl")
-    
+
     print("Design successfully generated and exported.")

@@ -1,361 +1,194 @@
 # =============================================================================
-# NemoClaw Virtual Twin Companion — Streamlit UI
+# NemoClaw Virtual Twin Companion — Dynamic Polymorphic Streamlit UI
 # =============================================================================
-# PURPOSE:
-#   Provides the web-based chat interface for the NemoClaw Virtual Twin
-#   Companion system. Users type natural-language drone design goals, the
-#   Orchestrator (main.py) processes them through the multi-agent pipeline,
-#   and results are displayed with full agent trace visibility.
-#
-# NVIDIA STACK CONTEXT:
-#   - The chat pipeline invokes LangGraph → ChatNVIDIA → NemoClaw/OpenShell
-#   - Agent Trace section demonstrates NeMo Agent Toolkit observability
-#   - NVIDIA Riva ASR/TTS stubs show the Speech-to-CAD workflow path
-#   - 3D model viewer stub shows PyVista/stpyvista integration path
-#
-# ENTRY POINT:
-#   streamlit run app.py
-#
-# Component: Streamlit_UI
-# =============================================================================
-
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import json
+import os
+import pyvista as pv
 
 from main import run_graph
 
+# Output directory for generated CAD assets — relative to the workspace.
+OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Output_Dir")
 
-# =============================================================================
-# Page Configuration
-# =============================================================================
+st.set_page_config(page_title="NemoClaw Virtual Twin Companion", page_icon="🚁", layout="wide")
 
-st.set_page_config(
-    page_title="NemoClaw Virtual Twin Companion",
-    page_icon="🚁",
-    layout="wide",
-)
-
-
-# =============================================================================
-# Session State Initialization
-# =============================================================================
-
+# Session State Setup
 if "messages" not in st.session_state:
     st.session_state.messages = []
-
 if "last_trace" not in st.session_state:
     st.session_state.last_trace = []
+if "cad_output_paths" not in st.session_state:
+    st.session_state.cad_output_paths = []
+if "active_component_type" not in st.session_state:
+    st.session_state.active_component_type = "chassis"
 
-
-# =============================================================================
-# Header
-# =============================================================================
+# Dynamic Parameter Constraint Reference Dictionary for Table Formats
+COMPONENT_METADATA = {
+    "chassis": {
+        "arm_count": (3.0, 8.0), "arm_length": (80.0, 200.0), "material_thickness": (2.0, 10.0),
+        "arm_width": (8.0, 25.0), "center_cutout_radius": (10.0, 30.0)
+    },
+    "propeller": {
+        "blade_count": (2.0, 4.0), "diameter_mm": (50.0, 400.0),
+        "pitch_inches": (2.0, 12.0), "hub_radius_mm": (3.0, 15.0),
+        "hub_thickness_mm": (4.0, 20.0)
+    },
+    "motor_mount": {
+        "outer_diameter": (15.0, 60.0), "mount_thickness": (1.5, 8.0),
+        "center_hole_diameter": (3.0, 15.0), "bolt_spacing": (8.0, 30.0)
+    }
+}
 
 st.title("🚁 NemoClaw Virtual Twin Companion")
-st.caption(
-    "Conversational parametric CAD design powered by NVIDIA NIM, "
-    "NeMo Agent Toolkit, and NemoClaw/OpenShell"
-)
-
-
-# =============================================================================
-# Main Layout — Two Columns
-# =============================================================================
+st.caption("Polymorphic Multi-Part Design Engine powered by NVIDIA NIM and CadQuery Library Archetypes")
 
 col_chat, col_sidebar = st.columns([2, 1])
 
-# =============================================================================
-# Chat Column — User Input and Response Display
-# =============================================================================
-
 with col_chat:
     st.subheader("💬 Design Chat")
-
-    # Display chat history preserving all messages within the session
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             if msg.get("is_error"):
                 st.error(msg["content"])
             elif msg.get("is_result"):
-                # Display design parameters as a formatted table
                 st.markdown(msg["content"])
             else:
                 st.write(msg["content"])
 
-    # Chat input where users type natural-language design goals
-    if prompt := st.chat_input("Describe your drone design goal..."):
-        # Append user message to chat history
+    if prompt := st.chat_input("Describe your design goal (e.g., 'Design a 3-blade propeller with 100mm diameter')..."):
         st.session_state.messages.append({"role": "user", "content": prompt})
-
         with st.chat_message("user"):
             st.write(prompt)
 
-        # Show loading indicator (st.spinner) while Orchestrator processes
         with st.chat_message("assistant"):
-            with st.spinner("🔄 Processing design through multi-agent pipeline..."):
+            with st.spinner("🔄 Processing through multi-part template factory pipeline..."):
                 try:
-                    # Invoke the LangGraph orchestrator pipeline
                     result = run_graph(prompt)
-
-                    # Store agent trace for display
                     st.session_state.last_trace = result.get("agent_trace", [])
 
-                    # Check for errors (guardrail rejection, timeout, max iterations)
+                    # Track component type returned by the Graph
+                    comp_type = result.get("component_type", "chassis")
+                    st.session_state.active_component_type = comp_type
+
                     if result.get("error"):
                         error_msg = result["error"]
                         st.error(f"⚠️ {error_msg}")
-                        st.session_state.messages.append({
-                            "role": "assistant",
-                            "content": error_msg,
-                            "is_error": True,
-                        })
+                        st.session_state.messages.append({"role": "assistant", "content": error_msg, "is_error": True})
                     else:
-                        # Build response content with design parameters and verdict
                         response_parts = []
-
-                        # Display validator verdict with score prominently
                         verdict = result.get("validator_verdict", "N/A")
                         score = result.get("validator_score", 0.0)
-                        iterations = result.get("iteration_count", 0)
 
-                        verdict_emoji = "✅" if verdict == "PASS" else "❌"
-                        response_parts.append(
-                            f"### {verdict_emoji} Validator Verdict: **{verdict}** "
-                            f"(Score: {score:.2f})"
-                        )
-                        response_parts.append(
-                            f"*Completed in {iterations} iteration(s)*"
-                        )
+                        response_parts.append(f"### {'✅' if verdict == 'PASS' else '❌'} Validator Verdict: **{verdict}** (Score: {score:.2f})")
                         response_parts.append("")
 
-                        # Display Design_Parameters as a formatted table
+                        # POLYMORPHIC PARAMETER GENERATOR TABLE
                         params = result.get("design_parameters")
                         if params:
-                            response_parts.append("#### 📐 Design Parameters")
-                            # Create a DataFrame for clean table display
-                            param_data = {
-                                "Parameter": [],
-                                "Value (mm)": [],
-                                "Min": [],
-                                "Max": [],
-                            }
-                            ranges = {
-                                "arm_length": (80.0, 200.0),
-                                "material_thickness": (2.0, 10.0),
-                                "arm_width": (8.0, 25.0),
-                                "center_cutout_radius": (10.0, 30.0),
-                            }
-                            for key, (lo, hi) in ranges.items():
+                            response_parts.append(f"#### 📐 Generated {comp_type.title()} Parameters")
+                            param_data = {"Parameter": [], "Value": [], "Min Constraint": [], "Max Constraint": []}
+
+                            ranges = COMPONENT_METADATA.get(comp_type, {})
+                            for key, val in params.items():
                                 param_data["Parameter"].append(key)
-                                param_data["Value (mm)"].append(
-                                    f"{params.get(key, 'N/A'):.2f}"
-                                    if isinstance(params.get(key), (int, float))
-                                    else "N/A"
-                                )
-                                param_data["Min"].append(f"{lo:.1f}")
-                                param_data["Max"].append(f"{hi:.1f}")
+                                param_data["Value"].append(f"{val:.2f}" if isinstance(val, (int, float)) else str(val))
+                                if key in ranges:
+                                    param_data["Min Constraint"].append(f"{ranges[key][0]:.1f}")
+                                    param_data["Max Constraint"].append(f"{ranges[key][1]:.1f}")
+                                else:
+                                    param_data["Min Constraint"].append("N/A")
+                                    param_data["Max Constraint"].append("N/A")
 
-                            df = pd.DataFrame(param_data)
-                            st.dataframe(
-                                df,
-                                use_container_width=True,
-                                hide_index=True,
-                            )
+                            st.dataframe(pd.DataFrame(param_data), use_container_width=True, hide_index=True)
 
-                        # Display CAD output paths if available
                         cad_paths = result.get("cad_output_paths")
                         if cad_paths:
-                            response_parts.append("#### 📁 CAD Output Files")
-                            for path in cad_paths:
-                                response_parts.append(f"- `{path}`")
-                            response_parts.append("")
-
-                        # Display validator feedback summary
-                        feedback_raw = result.get("validator_feedback")
-                        if feedback_raw:
-                            try:
-                                feedback = json.loads(feedback_raw)
-                                if feedback.get("issues"):
-                                    response_parts.append("#### ⚠️ Issues")
-                                    for issue in feedback["issues"]:
-                                        response_parts.append(f"- {issue}")
-                                if feedback.get("suggestions"):
-                                    response_parts.append("#### 💡 Suggestions")
-                                    for suggestion in feedback["suggestions"]:
-                                        response_parts.append(f"- {suggestion}")
-                                if feedback.get("reasoning"):
-                                    response_parts.append("#### 🧠 Reasoning")
-                                    response_parts.append(feedback["reasoning"])
-                            except (json.JSONDecodeError, TypeError):
-                                # Feedback is plain text, not JSON
-                                response_parts.append(f"**Feedback:** {feedback_raw}")
+                            st.session_state.cad_output_paths = cad_paths
 
                         full_response = "\n".join(response_parts)
                         st.markdown(full_response)
-
-                        st.session_state.messages.append({
-                            "role": "assistant",
-                            "content": full_response,
-                            "is_result": True,
-                        })
+                        st.session_state.messages.append({"role": "assistant", "content": full_response, "is_result": True})
 
                 except Exception as e:
-                    # Display unexpected errors with visual differentiation
-                    error_detail = f"Unexpected error: {str(e)}"
-                    st.error(f"🔥 {error_detail}")
-                    st.session_state.messages.append({
-                        "role": "assistant",
-                        "content": error_detail,
-                        "is_error": True,
-                    })
-
-
-# =============================================================================
-# Sidebar Column — Agent Trace, 3D Viewer, and Riva Stubs
-# =============================================================================
+                    st.error(f"🔥 Unexpected error: {str(e)}")
 
 with col_sidebar:
-
-    # =========================================================================
-    # Agent Trace — Expandable Section (NeMo Agent Toolkit Observability)
-    # =========================================================================
-    # The Agent Trace shows chronological agent invocations, tool calls, and
-    # state transitions as logged by NeMo Agent Toolkit observability patterns.
-    # Each entry records the node name, action taken, and any relevant metadata.
-    # =========================================================================
-
-    with st.expander("🔍 Agent Trace", expanded=True):
+    with st.expander("🔍 Agent Trace", expanded=False):
         trace = st.session_state.last_trace
         if trace:
             for i, entry in enumerate(trace, 1):
-                node = entry.get("node", "unknown")
-                action = entry.get("action", "")
-
-                # Color-code by action type for visual differentiation
-                if action == "REJECTED":
-                    st.markdown(
-                        f"**{i}.** 🚫 `{node}` → {action}  \n"
-                        f"&nbsp;&nbsp;&nbsp;Reason: {entry.get('reason', 'N/A')}"
-                    )
-                elif action == "PASSED":
-                    st.markdown(f"**{i}.** ✅ `{node}` → {action}")
-                elif action == "GENERATED_PARAMS":
-                    params = entry.get("parameters", {})
-                    iteration = entry.get("iteration", "?")
-                    st.markdown(
-                        f"**{i}.** 🎯 `{node}` → {action} "
-                        f"(iter {iteration})"
-                    )
-                elif action == "GENERATED":
-                    outputs = entry.get("outputs", [])
-                    st.markdown(
-                        f"**{i}.** 🏭 `{node}` → {action}  \n"
-                        f"&nbsp;&nbsp;&nbsp;Files: {', '.join(outputs)}"
-                    )
-                elif action == "EVALUATED":
-                    verdict = entry.get("verdict", "?")
-                    score = entry.get("score", 0)
-                    v_emoji = "✅" if verdict == "PASS" else "❌"
-                    st.markdown(
-                        f"**{i}.** {v_emoji} `{node}` → {action}  \n"
-                        f"&nbsp;&nbsp;&nbsp;Verdict: {verdict} | Score: {score:.2f}"
-                    )
-                elif action in ("VALIDATION_FAILED", "EXECUTION_FAILED"):
-                    st.markdown(
-                        f"**{i}.** 🔥 `{node}` → {action}  \n"
-                        f"&nbsp;&nbsp;&nbsp;{entry.get('reason', entry.get('errors', ''))}"
-                    )
-                else:
-                    st.markdown(f"**{i}.** ⚙️ `{node}` → {action}")
+                st.markdown(f"**{i}.** `{entry.get('node')}` → {entry.get('action')}")
         else:
-            st.caption("No agent trace yet. Submit a design goal to see the pipeline in action.")
+            st.caption("No agent trace paths logged.")
 
-    # =========================================================================
-    # 3D Model Viewer Placeholder — PyVista / stpyvista Integration Stub
-    # =========================================================================
-    # In production, this section would render the generated STEP/STL geometry
-    # using PyVista (VTK-based 3D rendering) with stpyvista for Streamlit
-    # embedding. The CAD Tool outputs (optimized_drone_chassis.step/.stl)
-    # would be loaded and displayed interactively here.
-    #
-    # Integration path:
-    #   1. Install: pip install pyvista stpyvista
-    #   2. Load STL: mesh = pyvista.read("optimized_drone_chassis.stl")
-    #   3. Render: stpyvista.stpyvista(plotter) inside this section
-    # =========================================================================
-
+    # POLYMORPHIC 3D VIEWPORT ENGINE
     st.subheader("🖥️ 3D Model Viewer")
-    st.info(
-        "**PyVista/stpyvista 3D viewer** — integration pending.  \n"
-        "Once connected, this section will render the generated drone chassis "
-        "geometry (STEP/STL) with interactive rotation, zoom, and cross-section views."
-    )
+    stl_path, step_path = None, None
 
-    # =========================================================================
-    # NVIDIA Riva ASR Stub — Speech-to-CAD Workflow
-    # =========================================================================
-    # NVIDIA Riva ASR (Automatic Speech Recognition) enables the Speech-to-CAD
-    # workflow where engineers can speak design goals hands-free:
-    #
-    # Workflow:
-    #   1. User speaks into microphone → Riva ASR captures audio stream
-    #   2. Riva ASR transcribes speech to text in real-time (streaming gRPC)
-    #   3. Transcribed text is fed into the st.chat_input pipeline
-    #   4. The Orchestrator processes the voice-originated request identically
-    #      to typed input (same LangGraph pipeline)
-    #   5. This enables workshop/lab environments where hands are occupied
-    #
-    # Integration path:
-    #   1. Deploy Riva ASR server (NGC container or Riva ServiceMaker)
-    #   2. Use riva.client.ASRService for streaming recognition
-    #   3. Feed recognized text into st.session_state for chat processing
-    #
-    # NVIDIA Riva API: https://docs.nvidia.com/deeplearning/riva/
-    # =========================================================================
+    for path in st.session_state.get("cad_output_paths", []):
+        if path.endswith(".stl"):
+            stl_path = path
+        elif path.endswith(".step") or path.endswith(".stp"):
+            step_path = path
 
-    st.subheader("🎤 Voice Input (NVIDIA Riva ASR)")
-    st.info(
-        "**NVIDIA Riva Speech-to-Text** — integration pending.  \n"
-        "Enables hands-free drone design: speak your design goals and "
-        "Riva ASR transcribes them into the chat pipeline for processing."
-    )
+    # Local fallback scanner logic
+    if not stl_path or not os.path.exists(stl_path):
+        c_type = st.session_state.active_component_type
+        disk_stl = os.path.join(OUTPUT_DIR, f"generated_{c_type}.stl")
+        disk_step = os.path.join(OUTPUT_DIR, f"generated_{c_type}.step")
+        if os.path.exists(disk_stl):
+            stl_path = disk_stl
+        if os.path.exists(disk_step):
+            step_path = disk_step
 
-    # =========================================================================
-    # NVIDIA Riva TTS Stub — Voice Feedback for Design Results
-    # =========================================================================
-    # NVIDIA Riva TTS (Text-to-Speech) provides voice feedback so engineers
-    # can hear design results and validation verdicts without reading the screen:
-    #
-    # Workflow:
-    #   1. Orchestrator completes design cycle → produces verdict + parameters
-    #   2. Riva TTS synthesizes a spoken summary of the result
-    #   3. Audio is played back through the browser (st.audio or WebRTC)
-    #   4. Example output: "Design passed validation with score 0.85.
-    #      Arm length 150mm, material thickness 4mm."
-    #
-    # Integration path:
-    #   1. Deploy Riva TTS server (NGC container or Riva ServiceMaker)
-    #   2. Use riva.client.TTSService to synthesize response text
-    #   3. Stream audio to Streamlit via st.audio component
-    #
-    # NVIDIA Riva API: https://docs.nvidia.com/deeplearning/riva/
-    # =========================================================================
+    if stl_path and os.path.exists(stl_path):
+        try:
+            pv.OFF_SCREEN = True
+            plotter = pv.Plotter(notebook=True, window_size=[600, 400])
+            mesh = pv.read(stl_path)
+            plotter.add_mesh(mesh, color="#76B900", show_edges=True, edge_color="#1A1A1A", smooth_shading=True)
+            plotter.view_isometric()
+            plotter.background_color = "#FFFFFF"
 
-    st.subheader("🔊 Voice Output (NVIDIA Riva TTS)")
-    st.info(
-        "**NVIDIA Riva Text-to-Speech** — integration pending.  \n"
-        "Provides audible feedback of design results and validator verdicts "
-        "for multimodal, hands-free interaction in workshop environments."
-    )
+            parent_dir = os.path.dirname(stl_path) if os.path.dirname(stl_path) else "."
+            temp_html_output = os.path.join(parent_dir, "active_twin_viewport.html")
+            plotter.export_html(temp_html_output)
 
+            with open(temp_html_output, "r", encoding="utf-8") as html_file:
+                components.html(html_file.read(), height=420, scrolling=False)
+            if os.path.exists(temp_html_output):
+                os.remove(temp_html_output)
 
-# =============================================================================
-# Footer
-# =============================================================================
-
-st.divider()
-st.caption(
-    "Built with NVIDIA NIM • NeMo Agent Toolkit • NemoClaw/OpenShell • "
-    "LangGraph • Streamlit"
-)
+            # Download buttons for both manufacturing formats (STEP + STL)
+            comp = st.session_state.active_component_type.upper()
+            dl_col1, dl_col2 = st.columns(2)
+            with dl_col1:
+                if step_path and os.path.exists(step_path):
+                    with open(step_path, "rb") as step_binary:
+                        st.download_button(
+                            label=f"📥 STEP ({comp})",
+                            data=step_binary.read(),
+                            file_name=os.path.basename(step_path),
+                            mime="application/step",
+                            use_container_width=True,
+                            help="BREP solid for manufacturing / CAD import (CATIA, SolidWorks, Fusion).",
+                        )
+                else:
+                    st.caption("STEP unavailable")
+            with dl_col2:
+                with open(stl_path, "rb") as stl_binary:
+                    st.download_button(
+                        label=f"📥 STL ({comp})",
+                        data=stl_binary.read(),
+                        file_name=os.path.basename(stl_path),
+                        mime="application/octet-stream",
+                        use_container_width=True,
+                        help="Tessellated mesh for 3D printing / slicers (PrusaSlicer, Cura).",
+                    )
+        except Exception as view_err:
+            st.error(f"Failed to compile 3D Viewport engine: {view_err}")
+    else:
+        st.info("💡 **No 3D Model Found.** Run a conversational part generation task to update the workspace viewport.")

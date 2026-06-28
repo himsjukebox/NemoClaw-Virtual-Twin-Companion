@@ -30,12 +30,21 @@ cadquery>=2.4.0
 # PDF loading for RAG ingestion
 pypdf>=3.0.0
 
+# PDF image extraction for multimodal RAG
+pymupdf>=1.24.0
+
 # Environment variable management for local development
 python-dotenv>=1.0.0
 
 # 3D visualization in Streamlit
-pyvista>=0.43.0
+# pyvista[jupyter] pulls in the trame stack (trame-vtk) required by
+# Plotter.export_html() for the interactive 3D viewport in the UI.
+pyvista[jupyter]>=0.43.0
 stpyvista>=0.0.10
+
+# Interactive 3D viewport rendering (PyVista export_html backend)
+panel>=1.4.0
+nest_asyncio2>=1.7.0
 
 # Utilities
 numpy>=1.24.0

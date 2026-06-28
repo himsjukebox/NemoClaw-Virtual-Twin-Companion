@@ -34,3 +34,9 @@ rag_pipeline:
     search_type: "similarity"
     top_k: 5
     score_threshold: 0.7
+
+  # Multimodal: Vision model for image captioning during PDF ingestion
+  vision:
+    model: "meta/llama-3.2-90b-vision-instruct"
+    min_image_size: 100  # pixels — skip images smaller than this
+    enabled: true  # set to false to disable image captioning

@@ -1,36 +1,53 @@
 # =============================================================================
-# NemoClaw Virtual Twin Companion — RAG Engine
+# NemoClaw Virtual Twin Companion — RAG Engine (Multimodal)
 # =============================================================================
 # PURPOSE:
 #   Ingests PDFs from data/, builds/loads a FAISS vector store using
 #   NVIDIA Nemotron Embed (NV-Embed-QA), and serves similarity queries
 #   to the Validator Agent.
 #
+# MULTIMODAL ENHANCEMENT:
+#   In addition to text extraction, this engine uses PyMuPDF to extract
+#   images from PDF pages and sends them to a vision-language model
+#   (meta/llama-3.2-90b-vision-instruct via NVIDIA NIM) for captioning.
+#   The generated captions are stored as additional text chunks in the
+#   same FAISS vector store, enabling the Validator Agent to reason about
+#   engineering diagrams, dimension drawings, and technical illustrations.
+#
 # DESIGN RATIONALE:
 #   The RAG Engine operates in a degraded-mode tolerant fashion: every external
-#   dependency (NVIDIA API, PDF parsing, filesystem) has a fallback that returns
-#   an empty list rather than raising an exception. This ensures the Validator
-#   Agent can always proceed — using only built-in rules if RAG is unavailable.
+#   dependency (NVIDIA API, PDF parsing, filesystem, vision model) has a fallback
+#   that returns an empty list rather than raising an exception.
 #
 # NVIDIA STACK CONTEXT:
-#   Embeddings are generated exclusively via NVIDIAEmbeddings from
-#   langchain-nvidia-ai-endpoints, backed by the NV-Embed-QA Nemotron Embed
-#   model served through NVIDIA NIM.
+#   - NVIDIAEmbeddings (NV-Embed-QA) for text embedding
+#   - ChatNVIDIA (meta/llama-3.2-90b-vision-instruct) for image captioning
+#   Both via langchain-nvidia-ai-endpoints backed by NVIDIA NIM.
 # =============================================================================
 
+import base64
 import logging
 import os
 from pathlib import Path
 from typing import Any, Dict, List
 
-from langchain_nvidia_ai_endpoints import NVIDIAEmbeddings
+import fitz  # PyMuPDF for image extraction
+from langchain_nvidia_ai_endpoints import ChatNVIDIA, NVIDIAEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_community.document_loaders import PyPDFLoader
+from langchain_core.documents import Document
+from langchain_core.messages import HumanMessage
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from config.loader import load_rag_config
 
 logger = logging.getLogger(__name__)
+
+# Vision model for image captioning
+_VISION_MODEL = "meta/llama-3.2-90b-vision-instruct"
+
+# Minimum image size (pixels) to consider for captioning — skip tiny icons/logos
+_MIN_IMAGE_SIZE = 100  # width or height must be >= 100px
 
 
 class RAGEngine:
@@ -173,7 +190,7 @@ class RAGEngine:
             separators=[separator],
         )
 
-        # Load and split all PDFs
+        # Load and split all PDFs (text extraction)
         all_documents = []
         for pdf_file in pdf_files:
             try:
@@ -185,7 +202,7 @@ class RAGEngine:
                 chunks = text_splitter.split_documents(pages)
                 all_documents.extend(chunks)
                 logger.info(
-                    "Ingested '%s': %d pages → %d chunks.",
+                    "Ingested '%s': %d pages → %d text chunks.",
                     pdf_file.name,
                     len(pages),
                     len(chunks),
@@ -197,6 +214,15 @@ class RAGEngine:
                     e,
                 )
                 continue
+
+        # --- Multimodal: Extract and caption images from PDFs ---
+        image_docs = self._extract_and_caption_images(pdf_files)
+        if image_docs:
+            all_documents.extend(image_docs)
+            logger.info(
+                "Added %d image caption chunks to vector store.",
+                len(image_docs),
+            )
 
         if not all_documents:
             logger.warning(
@@ -231,6 +257,187 @@ class RAGEngine:
             )
 
         return vector_store
+
+    def _extract_and_caption_images(self, pdf_files: List[Path]) -> List[Document]:
+        """
+        Extract images from PDF files and generate text captions using a
+        vision-language model (meta/llama-3.2-90b-vision-instruct).
+
+        For each PDF, extracts embedded images using PyMuPDF. Images larger
+        than _MIN_IMAGE_SIZE are sent to the vision model for captioning.
+        The generated captions are returned as LangChain Document objects
+        ready for embedding and storage in the vector store.
+
+        This enables multimodal RAG: the Validator Agent can find engineering
+        knowledge from diagrams, dimension drawings, and technical illustrations
+        that have no associated text in the PDF.
+
+        Args:
+            pdf_files (List[Path]): List of PDF file paths to process.
+
+        Returns:
+            List[Document]: Caption documents with metadata indicating source
+                file and page number. Returns empty list if vision model is
+                unavailable or no images are found.
+
+        Component: RAG_Engine
+        """
+        image_documents = []
+
+        # Initialize vision model
+        try:
+            vision_llm = ChatNVIDIA(
+                model=_VISION_MODEL,
+                max_tokens=1024,
+                temperature=0.2,
+            )
+        except Exception as e:
+            logger.warning(
+                "Failed to initialize vision model '%s': %s. "
+                "Skipping image captioning (text-only RAG).",
+                _VISION_MODEL,
+                e,
+            )
+            return []
+
+        for pdf_file in pdf_files:
+            try:
+                doc = fitz.open(str(pdf_file))
+                image_count = 0
+
+                for page_num in range(len(doc)):
+                    page = doc[page_num]
+                    images = page.get_images(full=True)
+
+                    for img_idx, img_info in enumerate(images):
+                        try:
+                            xref = img_info[0]
+                            base_image = doc.extract_image(xref)
+                            image_bytes = base_image["image"]
+                            img_ext = base_image["ext"]
+                            width = base_image.get("width", 0)
+                            height = base_image.get("height", 0)
+
+                            # Skip small images (icons, logos, decorations)
+                            if width < _MIN_IMAGE_SIZE and height < _MIN_IMAGE_SIZE:
+                                continue
+
+                            # Convert to base64 for the vision API
+                            img_b64 = base64.b64encode(image_bytes).decode("utf-8")
+                            mime_type = f"image/{img_ext}" if img_ext != "jpg" else "image/jpeg"
+
+                            # Send to vision model for captioning
+                            caption = self._caption_image(
+                                vision_llm, img_b64, mime_type, pdf_file.name, page_num
+                            )
+
+                            if caption:
+                                image_documents.append(
+                                    Document(
+                                        page_content=caption,
+                                        metadata={
+                                            "source": pdf_file.name,
+                                            "page": page_num + 1,
+                                            "type": "image_caption",
+                                            "image_index": img_idx,
+                                        },
+                                    )
+                                )
+                                image_count += 1
+
+                        except Exception as e:
+                            logger.debug(
+                                "Failed to process image %d on page %d of '%s': %s",
+                                img_idx, page_num, pdf_file.name, e,
+                            )
+                            continue
+
+                doc.close()
+                if image_count > 0:
+                    logger.info(
+                        "Captioned %d images from '%s'.", image_count, pdf_file.name
+                    )
+
+            except Exception as e:
+                logger.warning(
+                    "Failed to extract images from '%s': %s. Skipping.",
+                    pdf_file.name, e,
+                )
+                continue
+
+        return image_documents
+
+    def _caption_image(
+        self,
+        vision_llm: ChatNVIDIA,
+        img_b64: str,
+        mime_type: str,
+        source_file: str,
+        page_num: int,
+    ) -> str:
+        """
+        Generate a text caption for an image using the vision-language model.
+
+        Sends the image to meta/llama-3.2-90b-vision-instruct with an
+        engineering-focused prompt to extract dimensions, materials,
+        structural features, and design constraints.
+
+        Args:
+            vision_llm (ChatNVIDIA): The vision model instance.
+            img_b64 (str): Base64-encoded image data.
+            mime_type (str): MIME type of the image (e.g., "image/png").
+            source_file (str): Source PDF filename for logging.
+            page_num (int): Page number (0-indexed) for logging.
+
+        Returns:
+            str: Generated caption text, or empty string on failure.
+
+        Component: RAG_Engine
+        """
+        try:
+            message = HumanMessage(
+                content=[
+                    {
+                        "type": "text",
+                        "text": (
+                            "You are an expert aerospace and drone engineer. "
+                            "Describe this engineering image in detail. Include:\n"
+                            "- All dimensions and measurements visible\n"
+                            "- Materials mentioned or implied\n"
+                            "- Structural features (joints, mounts, cutouts, arms)\n"
+                            "- Manufacturing constraints or notes\n"
+                            "- Any design parameters or specifications shown\n"
+                            "Be precise and technical. This description will be used "
+                            "to inform drone chassis design validation."
+                        ),
+                    },
+                    {
+                        "type": "image_url",
+                        "image_url": {
+                            "url": f"data:{mime_type};base64,{img_b64}",
+                        },
+                    },
+                ]
+            )
+
+            response = vision_llm.invoke([message])
+            caption = response.content.strip()
+
+            if caption:
+                # Prefix with context about where this came from
+                caption = (
+                    f"[Image from {source_file}, page {page_num + 1}] "
+                    f"{caption}"
+                )
+
+            return caption
+
+        except Exception as e:
+            logger.debug(
+                "Vision captioning failed for image on page %d of '%s': %s",
+                page_num, source_file, e,
+            )
+            return ""
 
     def query(self, text: str) -> List[Dict[str, str]]:
         """

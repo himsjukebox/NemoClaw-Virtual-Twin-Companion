@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environments
+venv/
+env/
+.venv/
+
+# Environment variables (contains API keys) — NEVER commit
+.env
+.env.*
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Generated CAD output (runtime artifacts)
+Output_Dir/
+*.step
+*.stl
+*.stp
+
+# RAG vector store (auto-generated)
+data/vectorstore/
+
+# Pytest / coverage
+.pytest_cache/
+htmlcov/
+.coverage
+
+# Kiro internal
+.kiro/
