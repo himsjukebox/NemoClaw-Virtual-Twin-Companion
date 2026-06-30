@@ -494,3 +494,66 @@ class ValidatorAgent:
         })
 
         return state
+
+
+# =============================================================================
+# Deterministic Physics Gate (R11.2–R11.6)
+# =============================================================================
+# MODULE-LEVEL pure function — importable as:
+#   from agents.validator_agent import physics_gate
+# =============================================================================
+
+
+def physics_gate(metrics: dict) -> tuple:
+    """
+    Deterministic physics gate (R11.2-R11.5).
+
+    Returns (passed: bool, issues: list[str], suggestions: list[str]).
+    FAIL if: TWR < use-case target, OR payload not feasible, OR structural fails.
+
+    Args:
+        metrics: Engineering metrics dict (from EngineeringMetrics.to_dict()).
+
+    Returns:
+        Tuple of (passed, issues, suggestions).
+    """
+    issues = []
+    suggestions = []
+
+    # Check TWR against use-case target (R11.2)
+    twr = metrics.get("twr")
+    target = metrics.get("twr_target")
+    if twr is None:
+        issues.append("TWR unavailable (AUW × g was zero).")
+    elif target is not None and twr < target:
+        use_case = metrics.get("use_case", "unknown")
+        issues.append(f"TWR {twr:.2f} below {use_case} target {target:.2f}.")
+        suggestions.append("Reduce frame mass/payload or select higher-thrust motors.")
+
+    # Check payload feasibility (R11.3)
+    if not metrics.get("payload_feasible", False):
+        margin = metrics.get("payload_margin_kg", 0.0)
+        if margin is not None:
+            deficit = abs(min(0.0, margin))
+            issues.append(f"Payload infeasible by {deficit:.3f} kg.")
+        else:
+            issues.append("Payload feasibility unknown (margin unavailable).")
+        suggestions.append("Increase thrust (motor class/count) or reduce payload.")
+
+    # Check structural pass (R11.4)
+    structural = metrics.get("structural", {})
+    if not structural.get("passed", False):
+        stress = structural.get("bending_stress_pa")
+        allowable = structural.get("allowable_stress_pa")
+        if stress is not None and allowable is not None:
+            issues.append(
+                f"Structural fail: stress {stress:.2e} Pa > allowable {allowable:.2e} Pa."
+            )
+        else:
+            issues.append("Structural check failed (stress data unavailable).")
+        suggestions.append(
+            "Increase arm_width or material_thickness, or choose a higher-yield material."
+        )
+
+    passed = len(issues) == 0
+    return (passed, issues, suggestions)

@@ -41,6 +41,48 @@ from models.parameters import (
 )
 from config.loader import load_agents_config
 
+# ---------------------------------------------------------------------------
+# Module-level constants and helper functions for mission/material extraction
+# ---------------------------------------------------------------------------
+
+SUPPORTED_MATERIALS = ("PLA", "ABS", "carbon_fiber", "aluminum")
+SUPPORTED_USE_CASES = ("racing", "cinematography", "delivery", "mapping")
+PAYLOAD_RANGE_KG = (0.0, 10.0)
+
+
+def build_mission_profile(parsed: dict, physics_config: dict) -> dict:
+    """
+    Assemble Mission_Profile from LLM-extracted fields with defaults (R1).
+
+    - payload_mass_kg: extracted or 0.0 default (R1.1, R1.4), clamped to
+      [0.0, 10.0] (R1.7)
+    - use_case: extracted or 'cinematography' default (R1.3, R1.6)
+    - target_flight_time_min: extracted or use-case default (R1.2, R1.5)
+    """
+    use_case = parsed.get("use_case")
+    if use_case not in SUPPORTED_USE_CASES:
+        use_case = "cinematography"
+
+    payload = float(parsed.get("payload_mass_kg", 0.0) or 0.0)
+    lo, hi = PAYLOAD_RANGE_KG
+    payload = max(lo, min(hi, payload))
+
+    target_ft = parsed.get("target_flight_time_min")
+    if target_ft is None:
+        target_ft = physics_config["use_cases"][use_case]["default_flight_time_min"]
+
+    return {
+        "payload_mass_kg": payload,
+        "use_case": use_case,
+        "target_flight_time_min": float(target_ft),
+    }
+
+
+def select_material(parsed: dict) -> str:
+    """Material selection with PLA default (R2.1-R2.3)."""
+    mat = parsed.get("material")
+    return mat if mat in SUPPORTED_MATERIALS else "PLA"
+
 
 class DesignAgent:
     """

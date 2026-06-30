@@ -16,7 +16,7 @@ class CADTool:
     def __init__(self):
         # Template Registry mapping component_type to physical template files
         self.template_registry = {
-            "chassis": "master_drone_template.py",
+            "chassis": "chassis_frame_template.py",
             "propeller": "propeller_template.py",
             "motor_mount": "motor_mount_template.py"
         }
@@ -29,7 +29,7 @@ class CADTool:
 
         # Route to correct template based on system state intent
         component_type = state.get("component_type", "chassis")
-        template_name = self.template_registry.get(component_type, "master_drone_template.py")
+        template_name = self.template_registry.get(component_type, "chassis_frame_template.py")
         # Resolve template path relative to project root for robustness
         template_path = os.path.join(PROJECT_ROOT, template_name)
 

@@ -2,7 +2,7 @@
 # NemoClaw Virtual Twin Companion — Tools Package
 # =============================================================================
 # This package contains the tool implementations used by the agent pipeline:
-#   1. CAD Tool     — Writes parameters into master_drone_template.py and
+#   1. CAD Tool     — Writes parameters into chassis_frame_template.py and
 #                     executes it inside NemoClaw/OpenShell sandbox
 #   2. RAG Engine   — PDF ingestion, FAISS vector store, and similarity
 #                     queries using NVIDIA Nemotron Embed (NV-Embed-QA)

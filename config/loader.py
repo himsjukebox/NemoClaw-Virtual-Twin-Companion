@@ -317,6 +317,160 @@ def load_rag_config(config_dir: Path | None = None) -> Dict[str, Any]:
     return data
 
 
+def load_physics_config(config_dir: Path | None = None) -> Dict[str, Any]:
+    """
+    Load and validate config/physics.yaml.
+
+    Required top-level keys:
+      constants, materials, motors, batteries, use_cases, factors, components
+
+    Sub-table validation:
+      - Each material entry must have: density, yield_strength
+      - Each use_case entry must have: target_twr, default_flight_time_min
+      - Each motor entry must have: mass_kg, max_thrust_n
+      - Each battery entry must have: capacity_mah, cells_s, mass_kg
+      - factors must have: structural_safety_factor, usable_capacity_fraction,
+        nominal_cell_voltage, propulsion_efficiency_factor
+      - components must have: esc_mass_kg, propeller_mass_kg,
+        propeller_diameter_mm, default_motor_class, default_battery_option
+
+    Args:
+        config_dir (Path | None): Optional override for the config directory path.
+
+    Returns:
+        Dict[str, Any]: Validated physics configuration dictionary.
+
+    Raises:
+        ConfigValidationError: If the file is missing, has invalid YAML,
+            or is missing required keys.
+
+    Component: Orchestrator
+    """
+    filepath = _resolve_config_path("physics.yaml", config_dir)
+    data = _load_yaml_file(filepath)
+
+    # Validate top-level required keys
+    top_level_keys = [
+        "constants", "materials", "motors", "batteries",
+        "use_cases", "factors", "components",
+    ]
+    _validate_required_keys(data, top_level_keys, "physics config", filepath)
+
+    # Validate materials sub-table: each entry needs density + yield_strength
+    materials = data["materials"]
+    if not isinstance(materials, dict):
+        raise ConfigValidationError(
+            f"'materials' in '{filepath}' must be a mapping, "
+            f"but got {type(materials).__name__}."
+        )
+    material_required_keys = ["density", "yield_strength"]
+    for mat_name, mat_config in materials.items():
+        if not isinstance(mat_config, dict):
+            raise ConfigValidationError(
+                f"Material '{mat_name}' in '{filepath}' must be a mapping "
+                f"with keys: {material_required_keys}, "
+                f"but got {type(mat_config).__name__}."
+            )
+        _validate_required_keys(
+            mat_config, material_required_keys,
+            context=f"material '{mat_name}'", filepath=filepath,
+        )
+
+    # Validate use_cases sub-table: each entry needs target_twr + default_flight_time_min
+    use_cases = data["use_cases"]
+    if not isinstance(use_cases, dict):
+        raise ConfigValidationError(
+            f"'use_cases' in '{filepath}' must be a mapping, "
+            f"but got {type(use_cases).__name__}."
+        )
+    use_case_required_keys = ["target_twr", "default_flight_time_min"]
+    for uc_name, uc_config in use_cases.items():
+        if not isinstance(uc_config, dict):
+            raise ConfigValidationError(
+                f"Use case '{uc_name}' in '{filepath}' must be a mapping "
+                f"with keys: {use_case_required_keys}, "
+                f"but got {type(uc_config).__name__}."
+            )
+        _validate_required_keys(
+            uc_config, use_case_required_keys,
+            context=f"use case '{uc_name}'", filepath=filepath,
+        )
+
+    # Validate motors sub-table: each entry needs mass_kg + max_thrust_n
+    motors = data["motors"]
+    if not isinstance(motors, dict):
+        raise ConfigValidationError(
+            f"'motors' in '{filepath}' must be a mapping, "
+            f"but got {type(motors).__name__}."
+        )
+    motor_required_keys = ["mass_kg", "max_thrust_n"]
+    for motor_name, motor_config in motors.items():
+        if not isinstance(motor_config, dict):
+            raise ConfigValidationError(
+                f"Motor '{motor_name}' in '{filepath}' must be a mapping "
+                f"with keys: {motor_required_keys}, "
+                f"but got {type(motor_config).__name__}."
+            )
+        _validate_required_keys(
+            motor_config, motor_required_keys,
+            context=f"motor '{motor_name}'", filepath=filepath,
+        )
+
+    # Validate batteries sub-table: each entry needs capacity_mah + cells_s + mass_kg
+    batteries = data["batteries"]
+    if not isinstance(batteries, dict):
+        raise ConfigValidationError(
+            f"'batteries' in '{filepath}' must be a mapping, "
+            f"but got {type(batteries).__name__}."
+        )
+    battery_required_keys = ["capacity_mah", "cells_s", "mass_kg"]
+    for batt_name, batt_config in batteries.items():
+        if not isinstance(batt_config, dict):
+            raise ConfigValidationError(
+                f"Battery '{batt_name}' in '{filepath}' must be a mapping "
+                f"with keys: {battery_required_keys}, "
+                f"but got {type(batt_config).__name__}."
+            )
+        _validate_required_keys(
+            batt_config, battery_required_keys,
+            context=f"battery '{batt_name}'", filepath=filepath,
+        )
+
+    # Validate factors sub-table
+    factors = data["factors"]
+    if not isinstance(factors, dict):
+        raise ConfigValidationError(
+            f"'factors' in '{filepath}' must be a mapping, "
+            f"but got {type(factors).__name__}."
+        )
+    factors_required_keys = [
+        "structural_safety_factor", "usable_capacity_fraction",
+        "nominal_cell_voltage", "propulsion_efficiency_factor",
+    ]
+    _validate_required_keys(
+        factors, factors_required_keys,
+        context="'factors'", filepath=filepath,
+    )
+
+    # Validate components sub-table
+    components = data["components"]
+    if not isinstance(components, dict):
+        raise ConfigValidationError(
+            f"'components' in '{filepath}' must be a mapping, "
+            f"but got {type(components).__name__}."
+        )
+    components_required_keys = [
+        "esc_mass_kg", "propeller_mass_kg", "propeller_diameter_mm",
+        "default_motor_class", "default_battery_option",
+    ]
+    _validate_required_keys(
+        components, components_required_keys,
+        context="'components'", filepath=filepath,
+    )
+
+    return data
+
+
 def load_all_configs(config_dir: Path | None = None) -> Dict[str, Dict[str, Any]]:
     """
     Load and validate all configuration files. Aborts startup on any failure.
@@ -330,7 +484,7 @@ def load_all_configs(config_dir: Path | None = None) -> Dict[str, Dict[str, Any]
 
     Returns:
         Dict[str, Dict[str, Any]]: Dictionary with keys 'agents', 'tools', 'rag',
-            each containing the validated configuration for that component.
+            'physics', each containing the validated configuration for that component.
 
     Raises:
         ConfigValidationError: If any configuration file fails to load or validate.
@@ -342,4 +496,5 @@ def load_all_configs(config_dir: Path | None = None) -> Dict[str, Dict[str, Any]
         "agents": load_agents_config(config_dir),
         "tools": load_tools_config(config_dir),
         "rag": load_rag_config(config_dir),
+        "physics": load_physics_config(config_dir),
     }

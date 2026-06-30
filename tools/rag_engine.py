@@ -216,13 +216,17 @@ class RAGEngine:
                 continue
 
         # --- Multimodal: Extract and caption images from PDFs ---
-        image_docs = self._extract_and_caption_images(pdf_files)
-        if image_docs:
-            all_documents.extend(image_docs)
-            logger.info(
-                "Added %d image caption chunks to vector store.",
-                len(image_docs),
-            )
+        vision_config = self._config.get("vision", {})
+        if vision_config.get("enabled", True):
+            image_docs = self._extract_and_caption_images(pdf_files)
+            if image_docs:
+                all_documents.extend(image_docs)
+                logger.info(
+                    "Added %d image caption chunks to vector store.",
+                    len(image_docs),
+                )
+        else:
+            logger.info("Image captioning disabled in config. Text-only RAG.")
 
         if not all_documents:
             logger.warning(

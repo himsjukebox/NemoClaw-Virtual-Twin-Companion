@@ -1,0 +1,30 @@
+constants:
+  g: 9.80665              # m/s^2
+  air_density: 1.225      # kg/m^3 at sea level
+materials:                # density kg/m^3, yield_strength Pa
+  PLA:           { density: 1240.0, yield_strength: 50.0e6 }
+  ABS:           { density: 1040.0, yield_strength: 40.0e6 }
+  carbon_fiber:  { density: 1600.0, yield_strength: 600.0e6 }
+  aluminum:      { density: 2700.0, yield_strength: 270.0e6 }
+motors:                   # per-motor mass kg, max thrust N
+  2207_2400kv:   { mass_kg: 0.032, max_thrust_n: 14.7 }
+  2806_1300kv:   { mass_kg: 0.045, max_thrust_n: 19.6 }
+batteries:                # capacity mAh, cells S, mass kg
+  4s_1500mah:    { capacity_mah: 1500, cells_s: 4, mass_kg: 0.190 }
+  6s_5000mah:    { capacity_mah: 5000, cells_s: 6, mass_kg: 0.700 }
+use_cases:                # target_twr, default_flight_time_min
+  racing:         { target_twr: 4.0, default_flight_time_min: 5.0 }
+  cinematography: { target_twr: 2.0, default_flight_time_min: 12.0 }
+  delivery:       { target_twr: 2.0, default_flight_time_min: 15.0 }
+  mapping:        { target_twr: 2.0, default_flight_time_min: 20.0 }
+factors:
+  structural_safety_factor: 2.0
+  usable_capacity_fraction: 0.8
+  nominal_cell_voltage: 3.7        # V per S
+  propulsion_efficiency_factor: 0.12   # W per N of hover thrust
+components:
+  esc_mass_kg: 0.010
+  propeller_mass_kg: 0.008
+  propeller_diameter_mm: 127.0
+  default_motor_class: "2207_2400kv"
+  default_battery_option: "4s_1500mah"

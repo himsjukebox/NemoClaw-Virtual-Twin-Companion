@@ -11,6 +11,8 @@ from langgraph.graph import StateGraph, END
 from langchain_nvidia_ai_endpoints import ChatNVIDIA
 
 from tools.cad_tool import CADTool
+from agents.design_agent import select_material, build_mission_profile
+from config.loader import load_physics_config
 
 # Load environment variables (NVIDIA_API_KEY) from .env for local development.
 load_dotenv()
@@ -43,6 +45,24 @@ def _get_rag_engine():
     return _rag_engine
 
 
+# ---------------------------------------------------------------------------
+# Lazy, cached Physics Engine singleton.
+# The Physics Engine computes all engineering metrics deterministically from
+# geometry, material, and mission inputs — no LLM or network inference.
+# Initialization is deferred; the config/physics.yaml must be present.
+# ---------------------------------------------------------------------------
+_physics_engine = None
+
+
+def _get_physics_engine():
+    """Return a cached PhysicsEngine instance."""
+    global _physics_engine
+    if _physics_engine is None:
+        from tools.physics_engine import PhysicsEngine
+        _physics_engine = PhysicsEngine()
+    return _physics_engine
+
+
 class WhiteboardState(TypedDict):
     user_prompt: str
     component_type: str
@@ -54,6 +74,10 @@ class WhiteboardState(TypedDict):
     iteration_count: int
     agent_trace: List[Dict[str, Any]]
     error: Optional[str]
+    material: Optional[str]
+    mission_profile: Optional[Dict[str, Any]]
+    frame_volume_m3: Optional[float]
+    engineering_metrics: Optional[Dict[str, Any]]
 
 
 llm = ChatNVIDIA(model="meta/llama-3.1-70b-instruct", temperature=0.1)
@@ -127,11 +151,22 @@ RESPONSE FORMAT EXAMPLE:
         state["design_parameters"] = parsed_output.get("design_parameters", {})
         state["error"] = None
 
+        # Extract material and mission_profile from LLM output (R1.8, R2.1, R2.2)
+        design_params = parsed_output.get("design_parameters", {})
+        material = select_material(design_params)
+        state["material"] = material
+
+        physics_cfg = load_physics_config()
+        mission = build_mission_profile(design_params, physics_cfg)
+        state["mission_profile"] = mission
+
         if "agent_trace" not in state:
             state["agent_trace"] = []
         state["agent_trace"].append({
             "node": "design_agent", "action": "GENERATED_PARAMS",
-            "parameters": state["design_parameters"], "component_type": state["component_type"], "iteration": iteration
+            "parameters": state["design_parameters"], "component_type": state["component_type"],
+            "material": state["material"], "mission_profile": state["mission_profile"],
+            "iteration": iteration
         })
     except Exception as e:
         state["error"] = f"Design Agent Parameter Parsing Crash: {str(e)}"
@@ -143,6 +178,36 @@ def cad_node(state: WhiteboardState) -> WhiteboardState:
         return state
     tool_executor = CADTool()
     return tool_executor(state)
+
+
+def physics_analysis_node(state: WhiteboardState) -> WhiteboardState:
+    """Physics analysis node: compute engineering metrics from geometry/material/mission."""
+    # R10.6: if CAD recorded an error, pass through unchanged
+    if state.get("error"):
+        return state
+
+    engine = _get_physics_engine()
+    geometry = state.get("design_parameters", {})
+    material = state.get("material", "PLA")
+    mission = state.get("mission_profile", {}) or {}
+    volume = state.get("frame_volume_m3")
+
+    metrics = engine.analyze(geometry, material, mission, frame_volume_m3=volume)
+    state["engineering_metrics"] = metrics.to_dict()
+
+    if "agent_trace" not in state:
+        state["agent_trace"] = []
+    state["agent_trace"].append({
+        "node": "physics_analysis",
+        "action": "COMPUTED_METRICS",
+        "auw_kg": metrics.auw_kg,
+        "twr": metrics.twr,
+        "payload_margin_kg": metrics.payload_margin_kg,
+        "flight_time_min": metrics.flight_time_min,
+        "structural_pass": metrics.structural.passed,
+        "iteration": state.get("iteration_count", 1),
+    })
+    return state
 
 
 def validator_agent_node(state: WhiteboardState) -> WhiteboardState:
@@ -222,6 +287,9 @@ Provide your final verdict in a strict JSON format string:
         evaluation = json.loads(raw_text)
         state["validator_verdict"] = evaluation.get("verdict", "FAIL")
         state["validator_score"] = evaluation.get("score", 0.0)
+        # Ensure score is consistent with verdict
+        if state["validator_verdict"] == "FAIL" and state["validator_score"] > 0.5:
+            state["validator_score"] = 0.3  # Cap score on FAIL
         state["validator_feedback"] = json.dumps({
             "issues": evaluation.get("issues", []), "reasoning": evaluation.get("reasoning", "")
         })
@@ -234,6 +302,37 @@ Provide your final verdict in a strict JSON format string:
     except Exception as e:
         state["validator_verdict"] = "FAIL"
         state["validator_feedback"] = str(e)
+
+    # --- Physics gate integration (R11.1-R11.8) ---
+    # PASS only when both the existing numeric range checks AND the physics gate pass.
+    # The physics gate is deterministic — no LLM dependency (R11.8, R15.3, R15.4).
+    from agents.validator_agent import physics_gate
+
+    engineering_metrics = state.get("engineering_metrics")
+    if engineering_metrics:
+        gate_passed, gate_issues, gate_suggestions = physics_gate(engineering_metrics)
+        if not gate_passed:
+            state["validator_verdict"] = "FAIL"
+            # Reduce score to reflect physics failure (cap at 0.4 max on physics FAIL)
+            current_score = state.get("validator_score", 1.0)
+            state["validator_score"] = min(current_score, 0.4) - 0.1 * len(gate_issues)
+            state["validator_score"] = max(0.0, state["validator_score"])
+            # Merge physics issues into validator_feedback so routing returns
+            # to the Design Agent with actionable suggestions (R11.6, R11.7).
+            existing_feedback = state.get("validator_feedback", "")
+            try:
+                fb = json.loads(existing_feedback) if existing_feedback else {}
+            except (json.JSONDecodeError, TypeError):
+                fb = {}
+            existing_issues = fb.get("issues", []) if isinstance(fb, dict) else []
+            existing_reasoning = fb.get("reasoning", "") if isinstance(fb, dict) else ""
+            merged_feedback = json.dumps({
+                "issues": existing_issues + gate_issues,
+                "suggestions": gate_suggestions,
+                "reasoning": existing_reasoning + " Physics gate FAILED: " + "; ".join(gate_issues),
+            })
+            state["validator_feedback"] = merged_feedback
+
     return state
 
 
@@ -246,11 +345,13 @@ def routing_verdict_edge(state: WhiteboardState):
 workflow = StateGraph(WhiteboardState)
 workflow.add_node("design_agent", design_agent_node)
 workflow.add_node("cad_tool", cad_node)
+workflow.add_node("physics_analysis", physics_analysis_node)
 workflow.add_node("validator_agent", validator_agent_node)
 
 workflow.set_entry_point("design_agent")
 workflow.add_edge("design_agent", "cad_tool")
-workflow.add_edge("cad_tool", "validator_agent")
+workflow.add_edge("cad_tool", "physics_analysis")
+workflow.add_edge("physics_analysis", "validator_agent")
 workflow.add_conditional_edges("validator_agent", routing_verdict_edge, {"design_agent": "design_agent", END: END})
 
 compiled_graph = workflow.compile()
@@ -259,6 +360,23 @@ compiled_graph = workflow.compile()
 def run_graph(prompt: str) -> dict:
     initial_state = {
         "user_prompt": prompt, "component_type": "chassis", "design_parameters": {}, "cad_output_paths": [],
-        "validator_verdict": "PENDING", "validator_score": 0.0, "validator_feedback": "", "iteration_count": 0, "agent_trace": [], "error": None
+        "validator_verdict": "PENDING", "validator_score": 0.0, "validator_feedback": "", "iteration_count": 0, "agent_trace": [], "error": None,
+        "material": None, "mission_profile": None, "frame_volume_m3": None, "engineering_metrics": None
     }
     return compiled_graph.invoke(initial_state)
+
+
+def stream_graph(prompt: str):
+    """
+    Stream the graph execution, yielding (node_name, state) after each node completes.
+    This enables real-time progress display in the UI.
+    """
+    initial_state = {
+        "user_prompt": prompt, "component_type": "chassis", "design_parameters": {}, "cad_output_paths": [],
+        "validator_verdict": "PENDING", "validator_score": 0.0, "validator_feedback": "", "iteration_count": 0, "agent_trace": [], "error": None,
+        "material": None, "mission_profile": None, "frame_volume_m3": None, "engineering_metrics": None
+    }
+    for event in compiled_graph.stream(initial_state):
+        # event is a dict like {"node_name": updated_state}
+        for node_name, state in event.items():
+            yield node_name, state

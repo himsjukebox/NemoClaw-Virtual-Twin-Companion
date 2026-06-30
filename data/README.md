@@ -70,3 +70,45 @@ rmdir /s /q data\vectorstore
 - Unparseable PDFs are skipped with a warning — they do not block ingestion.
 - If no PDFs are present, the system operates in degraded mode (empty context).
 - First ingestion with images may take a few minutes (one vision API call per image).
+
+## Recommended Reference PDFs
+
+For the best RAG grounding, download one or more of these open-access papers
+and place them in this directory:
+
+### Primary Recommendation
+
+**"Design and Development of Unibody Quadcopter Structure Using Optimization
+and Additive Manufacturing Techniques"**
+- Source: MDPI Designs journal (Open Access, CC BY 4.0)
+- URL: https://www.mdpi.com/2411-9660/6/1/8
+- Download: Click "Download PDF" on the page
+- Save as: `data/design-unibody-quadcopter-optimization-mdpi-2022.pdf`
+- Why: Covers structural FEA, PLA/ABS material selection, arm geometry
+  optimization, thrust-to-weight analysis, and 3D printing constraints.
+  Directly relevant to every metric the physics engine computes.
+
+### Additional Recommendations
+
+1. **"Design and Analysis of 3D Printed Quadrotor Frame"**
+   - URL: https://www.researchgate.net/publication/331813111
+   - Save as: `data/design-3d-printed-quadrotor-frame-2019.pdf`
+   - Why: ABS-PC and carbon fiberglass FDM analysis, structural simulation
+     under lift/drag/thrust, safety factor calculations.
+
+2. **"Quadcopter Design, Construction and Testing"**
+   - URL: https://www.researchgate.net/publication/331859602
+   - Save as: `data/design-quadcopter-construction-testing-2019.pdf`
+   - Why: Weight estimation methodology, component selection based on payload,
+     motor-prop matching, and flight time calculations.
+
+### After Adding PDFs
+
+Delete the old vector store to force re-ingestion:
+
+```bash
+rmdir /s /q data\vectorstore     # Windows
+# rm -rf data/vectorstore        # Linux/macOS
+```
+
+Then restart the app — the RAG Engine will re-ingest on the next validator run.

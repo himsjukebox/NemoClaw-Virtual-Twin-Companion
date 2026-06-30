@@ -11,10 +11,10 @@
 cad_generator:
   name: "Parametric CAD Generator"
   description: >
-    Executes master_drone_template.py with modified parametric variables to
+    Executes chassis_frame_template.py with modified parametric variables to
     produce STEP and STL files. This tool writes parameter values into the
     script's header, then invokes it inside a sandboxed environment.
-  script_path: "master_drone_template.py"
+  script_path: "chassis_frame_template.py"
   output_files:
     - "optimized_drone_chassis.step"
     - "optimized_drone_chassis.stl"

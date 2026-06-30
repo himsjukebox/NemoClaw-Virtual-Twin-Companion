@@ -24,7 +24,7 @@ pyyaml>=6.0
 # Vector store for RAG
 faiss-cpu>=1.7.0
 
-# CAD kernel (used by master_drone_template.py)
+# CAD kernel (used by chassis_frame_template.py)
 cadquery>=2.4.0
 
 # PDF loading for RAG ingestion
@@ -54,3 +54,6 @@ numpy>=1.24.0
 # =============================================================================
 hypothesis>=6.0.0
 pytest>=7.0.0
+
+# PDF report generation
+fpdf2>=2.7.0

@@ -31,13 +31,25 @@ design_agent:
     - arm_width (float, mm): Y-axis arm width. Range: 8–25.
     - center_cutout_radius (float, mm): Center hole radius for mass reduction. Range: 10–30.
 
+    MISSION AND MATERIAL FIELDS (include in your JSON output):
+    - material (string): Frame material selection. Allowed values: "PLA", "ABS", "carbon_fiber", "aluminum". Default to "PLA" if unsure.
+    - payload_mass_kg (float, kg): Expected payload mass the drone must carry. Range: 0.0–10.0. Default 0.0 if not specified.
+    - target_flight_time_min (float, minutes): Desired hover flight time. Leave absent if not specified by user — the system will apply a use-case default.
+    - use_case (string): Mission use case. Allowed values: "racing", "cinematography", "delivery", "mapping". Default to "cinematography" if unclear.
+
+    Note: material, payload_mass_kg, target_flight_time_min, and use_case inform
+    the downstream physics engine. Choose material based on the design goal —
+    carbon_fiber for lightweight/racing, aluminum for heavy-duty/delivery, PLA
+    for general prototyping, ABS for impact resistance. Infer payload and use_case
+    from the user's natural-language request when possible.
+
     FIXED CONSTRAINTS (never modify these):
     - motor_mount_radius: 18.0 mm (standard 2205 motor base)
     - center_body_radius: 35.0 mm (flight controller clearance)
     - fillet_radius: 3.0 mm (stress relief standard)
 
     RULES:
-    1. Always output a JSON object with the four parameter keys.
+    1. Always output a JSON object with the four geometry parameter keys PLUS material, payload_mass_kg, target_flight_time_min, and use_case.
     2. Respect physical constraints: center_cutout_radius < center_body_radius.
     3. Explain your reasoning before outputting the parameters.
     4. If a request is ambiguous, ask clarifying questions.

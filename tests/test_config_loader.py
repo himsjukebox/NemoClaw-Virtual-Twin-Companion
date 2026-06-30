@@ -20,6 +20,7 @@ from config.loader import (
     ConfigValidationError,
     load_agents_config,
     load_all_configs,
+    load_physics_config,
     load_rag_config,
     load_tools_config,
 )
@@ -52,7 +53,7 @@ def valid_config_dir(tmp_path):
     tools = {
         "cad_generator": {
             "name": "Parametric CAD Generator",
-            "script_path": "master_drone_template.py",
+            "script_path": "chassis_frame_template.py",
         },
         "rag_retriever": {
             "name": "Engineering Knowledge Retriever",
@@ -70,6 +71,45 @@ def valid_config_dir(tmp_path):
         }
     }
     (tmp_path / "rag.yaml").write_text(yaml.dump(rag), encoding="utf-8")
+
+    # physics.yaml
+    physics = {
+        "constants": {"g": 9.80665, "air_density": 1.225},
+        "materials": {
+            "PLA": {"density": 1240.0, "yield_strength": 50.0e6},
+            "ABS": {"density": 1040.0, "yield_strength": 40.0e6},
+            "carbon_fiber": {"density": 1600.0, "yield_strength": 600.0e6},
+            "aluminum": {"density": 2700.0, "yield_strength": 270.0e6},
+        },
+        "motors": {
+            "2207_2400kv": {"mass_kg": 0.032, "max_thrust_n": 14.7},
+            "2806_1300kv": {"mass_kg": 0.045, "max_thrust_n": 19.6},
+        },
+        "batteries": {
+            "4s_1500mah": {"capacity_mah": 1500, "cells_s": 4, "mass_kg": 0.190},
+            "6s_5000mah": {"capacity_mah": 5000, "cells_s": 6, "mass_kg": 0.700},
+        },
+        "use_cases": {
+            "racing": {"target_twr": 4.0, "default_flight_time_min": 5.0},
+            "cinematography": {"target_twr": 2.0, "default_flight_time_min": 12.0},
+            "delivery": {"target_twr": 2.0, "default_flight_time_min": 15.0},
+            "mapping": {"target_twr": 2.0, "default_flight_time_min": 20.0},
+        },
+        "factors": {
+            "structural_safety_factor": 2.0,
+            "usable_capacity_fraction": 0.8,
+            "nominal_cell_voltage": 3.7,
+            "propulsion_efficiency_factor": 0.12,
+        },
+        "components": {
+            "esc_mass_kg": 0.010,
+            "propeller_mass_kg": 0.008,
+            "propeller_diameter_mm": 127.0,
+            "default_motor_class": "2207_2400kv",
+            "default_battery_option": "4s_1500mah",
+        },
+    }
+    (tmp_path / "physics.yaml").write_text(yaml.dump(physics), encoding="utf-8")
 
     return tmp_path
 
@@ -127,11 +167,12 @@ class TestSuccessfulLoading:
         assert "retrieval" in pipeline
 
     def test_load_all_configs_returns_all_three(self, valid_config_dir):
-        """load_all_configs returns dict with agents, tools, and rag keys."""
+        """load_all_configs returns dict with agents, tools, rag, and physics keys."""
         result = load_all_configs(valid_config_dir)
         assert "agents" in result
         assert "tools" in result
         assert "rag" in result
+        assert "physics" in result
 
     def test_load_real_project_configs(self):
         """Validates that the actual project config files load successfully."""
@@ -140,6 +181,7 @@ class TestSuccessfulLoading:
         assert "agents" in result
         assert "tools" in result
         assert "rag" in result
+        assert "physics" in result
 
 
 # =============================================================================
@@ -287,7 +329,7 @@ class TestMissingRequiredKeys:
         """Tool missing 'name' key raises error identifying the key."""
         tools = {
             "cad_generator": {
-                "script_path": "master_drone_template.py",
+                "script_path": "chassis_frame_template.py",
             }
         }
         (tmp_path / "tools.yaml").write_text(yaml.dump(tools), encoding="utf-8")
@@ -402,3 +444,143 @@ class TestStartupAbort:
 
         with pytest.raises(ConfigValidationError):
             load_all_configs(tmp_path)
+
+
+# =============================================================================
+# Tests — Physics Config Loading
+# =============================================================================
+
+
+class TestPhysicsConfigLoading:
+    """Tests for load_physics_config validation (Requirements 12.8, 12.9)."""
+
+    def test_load_physics_config_valid(self, valid_config_dir):
+        """Valid physics.yaml loads successfully with all top-level keys present."""
+        result = load_physics_config(valid_config_dir)
+        assert isinstance(result, dict)
+        expected_keys = [
+            "constants", "materials", "motors", "batteries",
+            "use_cases", "factors", "components",
+        ]
+        for key in expected_keys:
+            assert key in result, f"Missing top-level key: {key}"
+
+    def test_load_physics_config_missing_file(self, empty_config_dir):
+        """Missing physics.yaml raises ConfigValidationError mentioning the path."""
+        with pytest.raises(ConfigValidationError) as exc_info:
+            load_physics_config(empty_config_dir)
+        error_msg = str(exc_info.value)
+        assert "physics.yaml" in error_msg
+        assert "not found" in error_msg.lower()
+
+    def test_load_physics_config_invalid_yaml(self, tmp_path):
+        """Invalid YAML in physics.yaml raises ConfigValidationError with file path."""
+        (tmp_path / "physics.yaml").write_text(
+            "constants:\n  g: [unclosed bracket", encoding="utf-8"
+        )
+        with pytest.raises(ConfigValidationError) as exc_info:
+            load_physics_config(tmp_path)
+        error_msg = str(exc_info.value)
+        assert "physics.yaml" in error_msg
+
+    def test_load_physics_config_missing_top_level_key(self, tmp_path):
+        """Physics config missing a top-level key (e.g. 'materials') raises error."""
+        # Write config without the 'materials' key
+        physics = {
+            "constants": {"g": 9.80665, "air_density": 1.225},
+            # "materials" intentionally omitted
+            "motors": {"2207_2400kv": {"mass_kg": 0.032, "max_thrust_n": 14.7}},
+            "batteries": {"4s_1500mah": {"capacity_mah": 1500, "cells_s": 4, "mass_kg": 0.190}},
+            "use_cases": {"racing": {"target_twr": 4.0, "default_flight_time_min": 5.0}},
+            "factors": {
+                "structural_safety_factor": 2.0,
+                "usable_capacity_fraction": 0.8,
+                "nominal_cell_voltage": 3.7,
+                "propulsion_efficiency_factor": 0.12,
+            },
+            "components": {
+                "esc_mass_kg": 0.010,
+                "propeller_mass_kg": 0.008,
+                "propeller_diameter_mm": 127.0,
+                "default_motor_class": "2207_2400kv",
+                "default_battery_option": "4s_1500mah",
+            },
+        }
+        (tmp_path / "physics.yaml").write_text(yaml.dump(physics), encoding="utf-8")
+        with pytest.raises(ConfigValidationError) as exc_info:
+            load_physics_config(tmp_path)
+        error_msg = str(exc_info.value)
+        assert "materials" in error_msg
+        assert "physics.yaml" in error_msg
+
+    def test_load_physics_config_missing_material_subkey(self, tmp_path):
+        """Material entry missing 'density' raises ConfigValidationError."""
+        physics = {
+            "constants": {"g": 9.80665, "air_density": 1.225},
+            "materials": {
+                "PLA": {"yield_strength": 50.0e6},  # missing density
+            },
+            "motors": {"2207_2400kv": {"mass_kg": 0.032, "max_thrust_n": 14.7}},
+            "batteries": {"4s_1500mah": {"capacity_mah": 1500, "cells_s": 4, "mass_kg": 0.190}},
+            "use_cases": {"racing": {"target_twr": 4.0, "default_flight_time_min": 5.0}},
+            "factors": {
+                "structural_safety_factor": 2.0,
+                "usable_capacity_fraction": 0.8,
+                "nominal_cell_voltage": 3.7,
+                "propulsion_efficiency_factor": 0.12,
+            },
+            "components": {
+                "esc_mass_kg": 0.010,
+                "propeller_mass_kg": 0.008,
+                "propeller_diameter_mm": 127.0,
+                "default_motor_class": "2207_2400kv",
+                "default_battery_option": "4s_1500mah",
+            },
+        }
+        (tmp_path / "physics.yaml").write_text(yaml.dump(physics), encoding="utf-8")
+        with pytest.raises(ConfigValidationError) as exc_info:
+            load_physics_config(tmp_path)
+        error_msg = str(exc_info.value)
+        assert "density" in error_msg
+        assert "physics.yaml" in error_msg
+
+    def test_load_physics_config_missing_use_case_subkey(self, tmp_path):
+        """Use case entry missing 'target_twr' raises ConfigValidationError."""
+        physics = {
+            "constants": {"g": 9.80665, "air_density": 1.225},
+            "materials": {
+                "PLA": {"density": 1240.0, "yield_strength": 50.0e6},
+            },
+            "motors": {"2207_2400kv": {"mass_kg": 0.032, "max_thrust_n": 14.7}},
+            "batteries": {"4s_1500mah": {"capacity_mah": 1500, "cells_s": 4, "mass_kg": 0.190}},
+            "use_cases": {
+                "racing": {"default_flight_time_min": 5.0},  # missing target_twr
+            },
+            "factors": {
+                "structural_safety_factor": 2.0,
+                "usable_capacity_fraction": 0.8,
+                "nominal_cell_voltage": 3.7,
+                "propulsion_efficiency_factor": 0.12,
+            },
+            "components": {
+                "esc_mass_kg": 0.010,
+                "propeller_mass_kg": 0.008,
+                "propeller_diameter_mm": 127.0,
+                "default_motor_class": "2207_2400kv",
+                "default_battery_option": "4s_1500mah",
+            },
+        }
+        (tmp_path / "physics.yaml").write_text(yaml.dump(physics), encoding="utf-8")
+        with pytest.raises(ConfigValidationError) as exc_info:
+            load_physics_config(tmp_path)
+        error_msg = str(exc_info.value)
+        assert "target_twr" in error_msg
+        assert "physics.yaml" in error_msg
+
+    def test_load_all_configs_includes_physics(self, valid_config_dir):
+        """load_all_configs returns a dict that includes the 'physics' key."""
+        result = load_all_configs(valid_config_dir)
+        assert "physics" in result
+        assert isinstance(result["physics"], dict)
+        assert "materials" in result["physics"]
+        assert "constants" in result["physics"]

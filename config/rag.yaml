@@ -11,7 +11,7 @@ rag_pipeline:
   
   # NVIDIA Embedding model — accessed via langchain-nvidia-ai-endpoints
   embedding:
-    model: "NV-Embed-QA"
+    model: "nvidia/nv-embedqa-e5-v5"
     # The NVIDIAEmbeddings class from langchain-nvidia-ai-endpoints handles
     # API key and endpoint configuration via environment variables.
     truncate: "END"
@@ -39,4 +39,4 @@ rag_pipeline:
   vision:
     model: "meta/llama-3.2-90b-vision-instruct"
     min_image_size: 100  # pixels — skip images smaller than this
-    enabled: true  # set to false to disable image captioning
+    enabled: false  # Disabled: vision captioning can be slow for large PDFs. Enable when needed.

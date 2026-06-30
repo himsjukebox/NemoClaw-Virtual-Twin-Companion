@@ -13,7 +13,7 @@
 #   validation ranges, and the Validator's rule checks. A single change here
 #   propagates everywhere.
 #
-# PARAMETERS (from master_drone_template.py):
+# PARAMETERS (from chassis_frame_template.py):
 #   - arm_length: Distance from center hub to motor mount (mm)
 #   - material_thickness: Plate thickness for FDM/SLS printing (mm)
 #   - arm_width: Cross-section width of each arm (mm)
